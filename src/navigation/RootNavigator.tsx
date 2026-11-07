@@ -32,7 +32,7 @@ export function RootNavigator() {
   return (
     <Stack.Navigator initialRouteName="Tabs">
       <Stack.Screen name="Tabs" component={Tabs} options={{ headerShown: false }} />
-      <Stack.Screen name="Presupuesto" component={PresupuestoScreen} options={{ title: 'Arma tu evento por presupuesto' }} />
+      <Stack.Screen name="Presupuesto" component={PresupuestoScreen} options={{ title: 'Arma mi evento por presupuesto' }} />
       <Stack.Screen name="Paquetes" component={PaquetesScreen} options={{ title: 'Paquetes recomendados' }} />
       <Stack.Screen name="Comparar" component={CompararScreen} options={{ title: 'Comparar paquetes' }} />
       <Stack.Screen name="Proveedor" component={ProveedorScreen} options={{ title: 'Ficha del proveedor' }} />
