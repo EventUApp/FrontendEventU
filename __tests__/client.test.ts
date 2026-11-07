@@ -1,0 +1,40 @@
+import { ApiError, apiFetch, NetworkError } from '../src/api/client';
+
+jest.mock('../src/config/env', () => ({ API_BASE_URL: 'https://api.ejemplo.test' }));
+
+const g = globalThis as unknown as { fetch: jest.Mock };
+
+describe('apiFetch', () => {
+  afterEach(() => jest.resetAllMocks());
+
+  it('devuelve el JSON si la respuesta es correcta', async () => {
+    g.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ status: 'ok' }) });
+    await expect(apiFetch('/health')).resolves.toEqual({ status: 'ok' });
+    expect(g.fetch.mock.calls[0][0]).toBe('https://api.ejemplo.test/api/v1/health');
+  });
+
+  it('convierte el error uniforme del API en ApiError', async () => {
+    g.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: async () => ({ error: { code: 'VALIDATION_ERROR', message: 'Revise los datos.', fields: { budget_cop: 'x' } } }),
+    });
+    await expect(apiFetch('/recommendations', { method: 'POST', body: {} })).rejects.toMatchObject({
+      status: 422,
+      code: 'VALIDATION_ERROR',
+      fields: { budget_cop: 'x' },
+    });
+  });
+
+  it('usa el mensaje genérico si el cuerpo del error no es JSON', async () => {
+    g.fetch = jest.fn().mockResolvedValue({ ok: false, status: 500, json: async () => { throw new Error('x'); } });
+    const err = (await apiFetch('/health').catch((e: unknown) => e)) as Error;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.message).toBe('No fue posible completar la operación. Intente nuevamente.');
+  });
+
+  it('lanza NetworkError si no hay conexión', async () => {
+    g.fetch = jest.fn().mockRejectedValue(new TypeError('Network request failed'));
+    await expect(apiFetch('/health')).rejects.toBeInstanceOf(NetworkError);
+  });
+});
