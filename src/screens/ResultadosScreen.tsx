@@ -3,6 +3,7 @@ import { useNavigation, type CompositeNavigationProp } from '@react-navigation/n
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -14,6 +15,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
+import MapView, { Marker } from 'react-native-maps';
 import { GENERIC_ERROR, NetworkError } from '../api/client';
 import { getProviders } from '../api/endpoints';
 import type {
@@ -28,12 +30,31 @@ import { LoadingNotice } from '../components/LoadingNotice';
 import { MinimalIcon } from '../components/MinimalIcon';
 import { NetworkErrorView } from '../components/NetworkErrorView';
 import { ProviderCard } from '../components/ProviderCard';
+import { RatingStars } from '../components/RatingStars';
 import { PROVIDERS_PAGE_SIZE } from '../config/limits';
 import type { RootStackParamList, TabParamList } from '../navigation/types';
 import { useFlow } from '../state/FlowContext';
 import { colors, font, MIN_TOUCH, spacing } from '../theme';
+import {
+  APPROXIMATE_LOCATION_TEXT,
+  CALI_DEFAULT_REGION,
+  calculateBbox,
+  isValidCoordinate,
+  MAP_LOAD_ERROR_MESSAGE,
+  SEARCH_THIS_ZONE_TEXT,
+  VIEW_PROFILE_BUTTON_TEXT,
+  type MapRegion,
+} from '../utils/map';
 import { formatCOP } from '../utils/money';
 import { validatePriceRange } from '../utils/validators';
+
+export {
+  APPROXIMATE_LOCATION_TEXT,
+  CALI_DEFAULT_REGION,
+  MAP_LOAD_ERROR_MESSAGE,
+  SEARCH_THIS_ZONE_TEXT,
+  VIEW_PROFILE_BUTTON_TEXT,
+};
 
 type ResultadosNavigationProp = CompositeNavigationProp<
   BottomTabNavigationProp<TabParamList, 'Resultados'>,
@@ -77,12 +98,39 @@ const EVENT_TYPES: EventType[] = ['cumpleanos', 'boda', 'xv'];
 const RATINGS = [3, 4, 4.5];
 const SORTS: SortOrder[] = ['recomendados', 'precio_asc', 'precio_desc', 'calificacion'];
 
+export interface ResultadosScreenProps {
+  simulateMapError?: boolean;
+}
+
+class MapErrorBoundary extends React.Component<
+  { onError: () => void; children: React.ReactNode },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  override componentDidCatch() {
+    this.props.onError();
+  }
+  override render() {
+    if (this.state.hasError) return null;
+    return this.props.children;
+  }
+}
+
+function MapErrorThrower(): null {
+  throw new Error('Simulated map load error');
+}
+
 /**
  * HU_EU_02_05 y HU_EU_02_15: pantalla 'Resultados' con tarjetas de proveedor, contador 'N resultados',
  * hoja de 'Filtros', hoja de 'Ordenar', chips con filtros activos, conmutador 'Lista / Mapa',
  * estado vacío y paginación de 10 en 10.
  */
-export default function ResultadosScreen() {
+export default function ResultadosScreen({
+  simulateMapError = false,
+}: ResultadosScreenProps = {}) {
   const navigation = useNavigation<ResultadosNavigationProp>();
   const { flow, update } = useFlow();
 
@@ -113,6 +161,11 @@ export default function ResultadosScreen() {
   // Estado temporal del borrador de orden (hoja de ordenar)
   const [draftSort, setDraftSort] = useState<SortOrder>('recomendados');
 
+  // Estados para la vista de mapa (HU_EU_03_14)
+  const [currentRegion, setCurrentRegion] = useState<MapRegion>(CALI_DEFAULT_REGION);
+  const [selectedProvider, setSelectedProvider] = useState<ProviderSummary | null>(null);
+  const [mapErrorBanner, setMapErrorBanner] = useState<string | null>(null);
+
   const baseQuery = useMemo<ProvidersQuery>(() => {
     const query: ProvidersQuery = { ...flow.filters };
     if (query.event_type === undefined && flow.eventType) {
@@ -123,6 +176,10 @@ export default function ResultadosScreen() {
     }
     return query;
   }, [flow.filters, flow.eventType, flow.guests]);
+
+  const validMapProviders = useMemo(() => {
+    return items.filter((p) => isValidCoordinate(p.latitude, p.longitude));
+  }, [items]);
 
   useEffect(() => {
     let active = true;
@@ -238,6 +295,22 @@ export default function ResultadosScreen() {
 
   const handleProviderPress = (provider: ProviderSummary) => {
     navigation.navigate('Proveedor', { providerId: provider.id });
+  };
+
+  const handleRegionChange = (region: MapRegion) => {
+    if (region) {
+      setCurrentRegion(region);
+    }
+  };
+
+  const handleSearchThisZone = () => {
+    const bbox = calculateBbox(currentRegion);
+    void fetchPage(1, { ...baseQuery, bbox });
+  };
+
+  const handleMapError = () => {
+    setMapErrorBanner(MAP_LOAD_ERROR_MESSAGE);
+    setViewMode('lista');
   };
 
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -444,14 +517,9 @@ export default function ResultadosScreen() {
     !loading && !networkError && !unexpectedError && items.length === 0;
 
   return (
-    <>
-      <ScrollView
-        testID="results-scroll"
-        style={styles.screen}
-        contentContainerStyle={styles.content}
-        onScroll={handleScroll}
-        scrollEventThrottle={160}
-      >
+    <View style={styles.screen}>
+      {/* Controles superiores compartidos entre Lista y Mapa (HU_EU_02_15 y HU_EU_03_14 criterio 2.3) */}
+      <View style={styles.topControls}>
         {/* Barra superior: contador 'N resultados' y conmutador 'Lista / Mapa' */}
         <View style={styles.headerRow}>
           <View style={styles.counterBlock}>
@@ -487,7 +555,10 @@ export default function ResultadosScreen() {
             </Pressable>
             <Pressable
               testID="btn-view-mapa"
-              onPress={() => setViewMode('mapa')}
+              onPress={() => {
+                setMapErrorBanner(null);
+                setViewMode('mapa');
+              }}
               accessibilityRole="tab"
               accessibilityState={{ selected: viewMode === 'mapa' }}
               style={[
@@ -604,82 +675,234 @@ export default function ResultadosScreen() {
           </ScrollView>
         ) : null}
 
-        {/* Estado de carga inicial o de paginación */}
-        {loading ? <LoadingNotice slow={slow} /> : null}
-
-        {/* Error de red (HU_EU_01_04, criterio 6) */}
-        {networkError ? (
-          <NetworkErrorView message={networkError} onRetry={handleRetry} />
-        ) : null}
-
-        {/* Error inesperado (criterio 6) */}
-        {unexpectedError ? (
-          <View style={styles.errorBanner} accessibilityRole="alert">
-            <Text style={styles.errorBannerText}>{unexpectedError}</Text>
-            <Pressable
-              testID="btn-retry-providers"
-              onPress={handleRetry}
-              accessibilityRole="button"
-              style={styles.primaryActionButton}
-            >
-              <Text style={styles.primaryActionText}>Reintentar</Text>
-            </Pressable>
+        {/* Banner de error de carga del mapa (HU_EU_03_14, criterio 6) */}
+        {mapErrorBanner ? (
+          <View testID="map-load-error-banner" style={styles.mapErrorBanner}>
+            <Text style={styles.mapErrorBannerText}>{mapErrorBanner}</Text>
           </View>
         ) : null}
+      </View>
 
-        {/* Estado vacío con mensaje literal y acción 'Limpiar filtros' (criterio 6) */}
-        {isEmpty ? (
-          <View testID="empty-results" style={styles.emptyCard}>
-            <Text style={styles.emptyMessage}>
-              No encontramos proveedores con esos criterios.
-            </Text>
+      {/* Vista Lista (HU_EU_02_05) */}
+      {viewMode === 'lista' ? (
+        <ScrollView
+          testID="results-scroll"
+          style={styles.scrollList}
+          contentContainerStyle={styles.content}
+          onScroll={handleScroll}
+          scrollEventThrottle={160}
+        >
+          {/* Estado de carga inicial o de paginación */}
+          {loading ? <LoadingNotice slow={slow} /> : null}
+
+          {/* Error de red (HU_EU_01_04, criterio 6) */}
+          {networkError ? (
+            <NetworkErrorView message={networkError} onRetry={handleRetry} />
+          ) : null}
+
+          {/* Error inesperado (criterio 6) */}
+          {unexpectedError ? (
+            <View style={styles.errorBanner} accessibilityRole="alert">
+              <Text style={styles.errorBannerText}>{unexpectedError}</Text>
+              <Pressable
+                testID="btn-retry-providers"
+                onPress={handleRetry}
+                accessibilityRole="button"
+                style={styles.primaryActionButton}
+              >
+                <Text style={styles.primaryActionText}>Reintentar</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {/* Estado vacío con mensaje literal y acción 'Limpiar filtros' (criterio 6) */}
+          {isEmpty ? (
+            <View testID="empty-results" style={styles.emptyCard}>
+              <Text style={styles.emptyMessage}>
+                No encontramos proveedores con esos criterios.
+              </Text>
+              <Pressable
+                testID="btn-clear-filters"
+                onPress={handleClearFilters}
+                accessibilityRole="button"
+                style={({ pressed }) => [
+                  styles.primaryActionButton,
+                  pressed ? styles.buttonPressed : null,
+                ]}
+              >
+                <Text style={styles.primaryActionText}>Limpiar filtros</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {/* Lista de tarjetas de proveedor (criterios 2.1 y 5) */}
+          {items.length > 0 ? (
+            <View style={styles.cardsList}>
+              {items.map((provider) => (
+                <ProviderCard
+                  key={provider.id}
+                  provider={provider}
+                  onPress={handleProviderPress}
+                />
+              ))}
+            </View>
+          ) : null}
+
+          {/* Paginación de 10 en 10 al llegar al final (criterio 5) */}
+          {loadingMore ? <LoadingNotice slow={slow} /> : null}
+
+          {hasMore && !loading ? (
             <Pressable
-              testID="btn-clear-filters"
-              onPress={handleClearFilters}
+              testID="btn-load-more"
+              onPress={handleLoadMore}
+              disabled={loadingMore}
               accessibilityRole="button"
+              accessibilityState={{ disabled: loadingMore }}
               style={({ pressed }) => [
-                styles.primaryActionButton,
+                styles.loadMoreButton,
+                loadingMore ? styles.buttonDisabled : null,
                 pressed ? styles.buttonPressed : null,
               ]}
             >
-              <Text style={styles.primaryActionText}>Limpiar filtros</Text>
+              <Text style={styles.loadMoreText}>Mostrar más proveedores</Text>
+            </Pressable>
+          ) : null}
+        </ScrollView>
+      ) : null}
+
+      {/* Vista Mapa (HU_EU_03_14) */}
+      {viewMode === 'mapa' ? (
+        <View testID="map-container" style={styles.mapContainer}>
+          <MapErrorBoundary onError={handleMapError}>
+            {simulateMapError ? (
+              <MapErrorThrower />
+            ) : (
+              <MapView
+                testID="results-map"
+                style={styles.mapView}
+                initialRegion={CALI_DEFAULT_REGION}
+                onRegionChangeComplete={handleRegionChange}
+              >
+                {/* 2.1 y 3.1: Marcadores con el precio 'Desde' solo para proveedores con coordenadas válidas */}
+                {validMapProviders.map((provider) => (
+                  <Marker
+                    key={provider.id}
+                    testID={`map-marker-${provider.id}`}
+                    coordinate={{
+                      latitude: provider.latitude!,
+                      longitude: provider.longitude!,
+                    }}
+                    onPress={() => setSelectedProvider(provider)}
+                  >
+                    <View style={styles.markerBadge}>
+                      <Text style={styles.markerBadgeText}>
+                        Desde {formatCOP(provider.price_from_cop)}
+                      </Text>
+                    </View>
+                  </Marker>
+                ))}
+              </MapView>
+            )}
+          </MapErrorBoundary>
+
+          {/* 2.4 y 5: Botón 'Buscar en esta zona' */}
+          <View style={styles.searchThisZoneWrapper}>
+            <Pressable
+              testID="btn-search-this-zone"
+              accessibilityRole="button"
+              accessibilityLabel={SEARCH_THIS_ZONE_TEXT}
+              style={({ pressed }) => [
+                styles.searchThisZoneButton,
+                loading ? styles.buttonDisabled : null,
+                pressed ? styles.buttonPressed : null,
+              ]}
+              onPress={handleSearchThisZone}
+              disabled={loading}
+            >
+              <MinimalIcon name="search" size={16} color="#FFFFFF" />
+              <Text style={styles.searchThisZoneText}>{SEARCH_THIS_ZONE_TEXT}</Text>
             </Pressable>
           </View>
-        ) : null}
 
-        {/* Lista de tarjetas de proveedor (criterios 2.1 y 5) */}
-        {items.length > 0 ? (
-          <View style={styles.cardsList}>
-            {items.map((provider) => (
-              <ProviderCard
-                key={provider.id}
-                provider={provider}
-                onPress={handleProviderPress}
-              />
-            ))}
-          </View>
-        ) : null}
+          {/* 2.2 y 5: Tarjeta emergente con foto, nombre, calificación y botón 'Ver ficha' */}
+          {selectedProvider ? (
+            <View testID="map-popup-card" style={styles.popupCard}>
+              <Pressable
+                testID="btn-popup-close"
+                accessibilityRole="button"
+                accessibilityLabel="Cerrar tarjeta"
+                style={styles.popupCloseButton}
+                onPress={() => setSelectedProvider(null)}
+              >
+                <Text style={styles.popupCloseText}>✕</Text>
+              </Pressable>
 
-        {/* Paginación de 10 en 10 al llegar al final (criterio 5) */}
-        {loadingMore ? <LoadingNotice slow={slow} /> : null}
+              <View style={styles.popupContentRow}>
+                {selectedProvider.cover_url ? (
+                  <Image
+                    testID="map-popup-image"
+                    source={{ uri: selectedProvider.cover_url }}
+                    style={styles.popupImage}
+                  />
+                ) : (
+                  <View style={styles.popupPlaceholderImage}>
+                    <Text style={styles.popupPlaceholderText}>
+                      {selectedProvider.name.slice(0, 2).toUpperCase()}
+                    </Text>
+                  </View>
+                )}
 
-        {hasMore && !loading ? (
-          <Pressable
-            testID="btn-load-more"
-            onPress={handleLoadMore}
-            disabled={loadingMore}
-            accessibilityRole="button"
-            accessibilityState={{ disabled: loadingMore }}
-            style={({ pressed }) => [
-              styles.loadMoreButton,
-              loadingMore ? styles.buttonDisabled : null,
-              pressed ? styles.buttonPressed : null,
-            ]}
-          >
-            <Text style={styles.loadMoreText}>Mostrar más proveedores</Text>
-          </Pressable>
-        ) : null}
-      </ScrollView>
+                <View style={styles.popupInfo}>
+                  <Text
+                    testID="map-popup-name"
+                    style={styles.popupTitle}
+                    numberOfLines={1}
+                  >
+                    {selectedProvider.name}
+                  </Text>
+                  <View style={styles.popupRatingRow}>
+                    <RatingStars
+                      ratingAvg={selectedProvider.rating_avg}
+                      ratingCount={selectedProvider.rating_count}
+                    />
+                  </View>
+                  <Text style={styles.popupPrice}>
+                    Desde {formatCOP(selectedProvider.price_from_cop)}
+                  </Text>
+                </View>
+              </View>
+
+              <Pressable
+                testID="btn-popup-view-profile"
+                accessibilityRole="button"
+                accessibilityLabel={VIEW_PROFILE_BUTTON_TEXT}
+                style={({ pressed }) => [
+                  styles.popupViewProfileButton,
+                  pressed ? styles.buttonPressed : null,
+                ]}
+                onPress={() => handleProviderPress(selectedProvider)}
+              >
+                <Text style={styles.popupViewProfileText}>
+                  {VIEW_PROFILE_BUTTON_TEXT}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {/* Indicadores de carga y error en modo mapa */}
+          {loading ? (
+            <View style={styles.mapLoadingOverlay}>
+              <LoadingNotice slow={slow} />
+            </View>
+          ) : null}
+
+          {networkError ? (
+            <View style={styles.mapErrorOverlay}>
+              <NetworkErrorView message={networkError} onRetry={handleRetry} />
+            </View>
+          ) : null}
+        </View>
+      ) : null}
 
       {/* Hoja de Filtros (criterio 1, 2 y 3) */}
       <Modal
@@ -979,7 +1202,7 @@ export default function ResultadosScreen() {
           </View>
         </View>
       </Modal>
-    </>
+    </View>
   );
 }
 
@@ -988,9 +1211,19 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
-  content: {
+  topControls: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
+    backgroundColor: colors.background,
+    zIndex: 10,
+    gap: spacing.md,
+  },
+  scrollList: {
+    flex: 1,
+  },
+  content: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
     paddingBottom: spacing.lg * 2,
     gap: spacing.md,
   },
@@ -1383,5 +1616,170 @@ const styles = StyleSheet.create({
     backgroundColor: surfaceTokens.accentSurface,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  mapContainer: {
+    flex: 1,
+    position: 'relative',
+    backgroundColor: '#E5E7EB',
+  },
+  mapView: {
+    ...StyleSheet.absoluteFill,
+  },
+  markerBadge: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  markerBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  searchThisZoneWrapper: {
+    position: 'absolute',
+    top: spacing.md,
+    alignSelf: 'center',
+    zIndex: 10,
+  },
+  searchThisZoneButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.md,
+    minHeight: MIN_TOUCH,
+    borderRadius: 22,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  searchThisZoneText: {
+    color: '#FFFFFF',
+    fontSize: font.base,
+    fontWeight: '700',
+  },
+  popupCard: {
+    position: 'absolute',
+    bottom: spacing.md,
+    left: spacing.md,
+    right: spacing.md,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: spacing.md,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    zIndex: 20,
+  },
+  popupCloseButton: {
+    position: 'absolute',
+    top: spacing.sm,
+    right: spacing.sm,
+    minWidth: 32,
+    minHeight: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  popupCloseText: {
+    fontSize: 16,
+    color: colors.muted,
+    fontWeight: '700',
+  },
+  popupContentRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+    paddingRight: 24,
+  },
+  popupImage: {
+    width: 64,
+    height: 64,
+    borderRadius: 8,
+    backgroundColor: '#EEEEF4',
+  },
+  popupPlaceholderImage: {
+    width: 64,
+    height: 64,
+    borderRadius: 8,
+    backgroundColor: surfaceTokens.chipBg,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  popupPlaceholderText: {
+    color: surfaceTokens.chipText,
+    fontSize: font.base,
+    fontWeight: '800',
+  },
+  popupInfo: {
+    flex: 1,
+    justifyContent: 'center',
+    gap: 2,
+  },
+  popupTitle: {
+    fontSize: font.base,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  popupRatingRow: {
+    marginVertical: 2,
+  },
+  popupPrice: {
+    fontSize: font.base - 2,
+    fontWeight: '700',
+    color: colors.primary,
+  },
+  popupViewProfileButton: {
+    minHeight: MIN_TOUCH,
+    backgroundColor: colors.primary,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: spacing.xs,
+  },
+  popupViewProfileText: {
+    color: '#FFFFFF',
+    fontSize: font.base,
+    fontWeight: '700',
+  },
+  mapLoadingOverlay: {
+    position: 'absolute',
+    top: spacing.md + 48,
+    alignSelf: 'center',
+    zIndex: 15,
+  },
+  mapErrorOverlay: {
+    position: 'absolute',
+    top: spacing.md + 48,
+    left: spacing.md,
+    right: spacing.md,
+    zIndex: 15,
+  },
+  mapErrorBanner: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 8,
+    padding: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  mapErrorBannerText: {
+    color: '#991B1B',
+    fontSize: font.base - 1,
+    textAlign: 'center',
   },
 });
