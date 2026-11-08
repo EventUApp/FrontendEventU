@@ -80,7 +80,7 @@ export interface ProviderReview {
 export interface ProviderSummary {
   id: string;
   name: string;
-  categories: Category[];
+  categories?: Category[];
   neighborhood: string;
   municipality: string;
   latitude: number | null;

@@ -823,5 +823,28 @@ describe('InicioScreen (HU_EU_01_12 — T_HU_EU_01_12_1)', () => {
       expect(renderedNames[2]).toContain('Tercero 4.8 B');
       expect(renderedNames[3]).toContain('Cuarto Sin Reseñas');
     });
+
+    it('no falla si el backend devuelve proveedores destacados sin categories', async () => {
+      const homeWithoutCategories: HomeResponse = {
+        categories: SAMPLE_HOME.categories,
+        featured: [
+          makeProvider(1, { id: 'prv-no-cat', name: 'Sin Categorias', categories: undefined }),
+        ],
+      };
+      jest.spyOn(endpoints, 'getHome').mockResolvedValueOnce(homeWithoutCategories);
+
+      const root = createRoot();
+      await act(async () => {
+        root.render(
+          <FlowProvider>
+            <InicioScreen />
+          </FlowProvider>,
+        );
+      });
+
+      const card = findByTestId(root.container, 'featured-prv-no-cat');
+      expect(card).toBeTruthy();
+      expect(textOf(card)).toContain('Sin Categorias');
+    });
   });
 });

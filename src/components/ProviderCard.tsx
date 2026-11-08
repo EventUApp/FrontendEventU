@@ -90,9 +90,9 @@ export function ProviderCard({ provider, onPress }: ProviderCardProps) {
           </Text>
         </View>
 
-        {provider.categories.length > 0 ? (
+        {(provider.categories?.length ?? 0) > 0 ? (
           <View style={styles.categoriesRow}>
-            {provider.categories.map((cat) => (
+            {provider.categories?.map((cat) => (
               <View key={cat} style={styles.categoryChip}>
                 <Text style={styles.categoryChipText}>
                   {CATEGORY_LABELS[cat] ?? cat}
