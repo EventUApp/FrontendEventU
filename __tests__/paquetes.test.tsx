@@ -431,4 +431,98 @@ describe('PaquetesScreen (HU_EU_01_02)', () => {
     expect(spy).toHaveBeenCalledTimes(3);
     expect(findAllText(root.container)).toContain('Ahorro');
   });
+
+  it('muestra aviso cuando el presupuesto no alcanza o no hay servicios disponibles (criterio 6 / HU_EU_01_03)', async () => {
+    jest
+      .spyOn(endpoints, 'postRecommendations')
+      .mockResolvedValueOnce({
+        packages: [],
+        unavailable: [{ modality: 'ahorro', cause: 'presupuesto_insuficiente' }],
+      })
+      .mockResolvedValueOnce({
+        packages: [],
+        unavailable: [{ modality: 'ahorro', cause: 'sin_servicios' }],
+      });
+
+    const root = createRoot();
+    act(() => {
+      root.render(
+        <FlowProvider>
+          <FlowHarness
+            initial={{
+              budgetCop: 1_000_000,
+              eventType: 'boda',
+              guests: 100,
+              packages: [],
+            }}
+          />
+        </FlowProvider>,
+      );
+    });
+
+    await act(async () => {
+      press(findByTestId(root.container, 'seed-flow'));
+    });
+
+    expect(findAllText(root.container)).toContain(
+      'Con ese presupuesto no es posible armar un paquete. Pruebe con un presupuesto mayor.',
+    );
+  });
+});
+
+describe('Contrato de respuesta de POST /recommendations (T_HU_EU_01_02_3)', () => {
+  const budgetCop = 10_000_000;
+  const ordered = [...samplePackages].sort(
+    (a, b) =>
+      ['ahorro', 'equilibrado', 'premium'].indexOf(a.modality) -
+      ['ahorro', 'equilibrado', 'premium'].indexOf(b.modality),
+  );
+
+  it('ordena las modalidades como Ahorro, Equilibrado y Premium (criterio 2.1 y 5)', () => {
+    expect(ordered.map((p) => p.modality)).toEqual(['ahorro', 'equilibrado', 'premium']);
+  });
+
+  it.each(ordered)(
+    'incluye los tres rubros obligatorios (espacio, alimentacion, decoracion) y entretenimiento opcional en $modality (criterio 3.1, RN-03)',
+    (pkg) => {
+      const categories = pkg.breakdown.map((b) => b.category);
+      expect(categories).toEqual(expect.arrayContaining(['espacio', 'alimentacion', 'decoracion']));
+      for (const cat of categories) {
+        expect(['espacio', 'alimentacion', 'decoracion', 'entretenimiento']).toContain(cat);
+      }
+    },
+  );
+
+  it.each(ordered)(
+    'cumple que la suma de servicios por rubro es igual al subtotal, la suma de subtotales es igual a total_cop y remaining_cop = presupuesto - total_cop en $modality (criterios 3.2 y 4)',
+    (pkg) => {
+      expect(Number.isInteger(pkg.total_cop)).toBe(true);
+      expect(Number.isInteger(pkg.remaining_cop)).toBe(true);
+      expect(pkg.total_cop).toBeLessThanOrEqual(budgetCop);
+
+      let sumOfItems = 0;
+      let sumOfSubtotals = 0;
+
+      for (const line of pkg.breakdown) {
+        expect(Number.isInteger(line.subtotal_cop)).toBe(true);
+        const lineItemsSum = line.items.reduce((acc, item) => {
+          expect(Number.isInteger(item.cost_cop)).toBe(true);
+          expect(item.service_id).toBeTruthy();
+          expect(item.name).toBeTruthy();
+          expect(item.provider_id).toBeTruthy();
+          expect(item.provider_name).toBeTruthy();
+          expect(['verificado', 'en_revision']).toContain(item.verification_status);
+          return acc + item.cost_cop;
+        }, 0);
+
+        expect(line.subtotal_cop).toBe(lineItemsSum);
+        sumOfItems += lineItemsSum;
+        sumOfSubtotals += line.subtotal_cop;
+      }
+
+      expect(pkg.total_cop).toBe(sumOfItems);
+      expect(pkg.total_cop).toBe(sumOfSubtotals);
+      expect(pkg.remaining_cop).toBe(budgetCop - pkg.total_cop);
+    },
+  );
 });
