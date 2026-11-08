@@ -6,6 +6,7 @@ import * as endpoints from '../src/api/endpoints';
 import type { ProviderSummary, ProvidersResponse } from '../src/api/types';
 import ResultadosScreen from '../src/screens/ResultadosScreen';
 import { FlowProvider, useFlow, type FlowState } from '../src/state/FlowContext';
+import { PRICE_MIN_GREATER_THAN_MAX_MESSAGE } from '../src/utils/validators';
 
 const mockNavigate = jest.fn();
 let mockRouteParams: Record<string, unknown> | undefined = undefined;
@@ -35,6 +36,10 @@ function findByTestId(root: TestInstance, testID: string): TestInstance {
     throw new Error(`No se encontró testID="${testID}"`);
   }
   return matches[0];
+}
+
+function hasTestId(root: TestInstance, testID: string): boolean {
+  return root.queryAll((n) => n.props.testID === testID).length > 0;
 }
 
 function press(node: TestInstance): unknown {
@@ -757,6 +762,452 @@ describe('ResultadosScreen (HU_EU_02_05 — T_HU_EU_02_05_2)', () => {
         });
       });
       expect(spy).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('HU_EU_02_15 — T_HU_EU_02_15_2: Hoja de Filtros, hoja de Ordenar y chips de filtros activos', () => {
+    beforeEach(() => {
+      mockRouteParams = undefined;
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+      mockNavigate.mockReset();
+    });
+
+    it('abre y cierra la hoja de Filtros y la hoja de Ordenar (criterio 1)', async () => {
+      jest.spyOn(endpoints, 'getProviders').mockResolvedValue({
+        items: [makeProvider(1)],
+        total: 1,
+        page: 1,
+        page_size: 10,
+      });
+
+      const root = createRoot();
+      await act(async () => {
+        root.render(
+          <FlowProvider>
+            <ResultadosScreen />
+          </FlowProvider>,
+        );
+      });
+
+      // Inicialmente las hojas están cerradas
+      expect(hasTestId(root.container, 'filters-sheet')).toBe(false);
+      expect(hasTestId(root.container, 'sort-sheet')).toBe(false);
+
+      // 1. Abrir hoja de Filtros
+      await act(async () => {
+        press(findByTestId(root.container, 'btn-filters'));
+      });
+      expect(hasTestId(root.container, 'filters-sheet')).toBe(true);
+      expect(textOf(findByTestId(root.container, 'filters-sheet-title'))).toBe('Filtros');
+
+      // Cerrar hoja de Filtros
+      await act(async () => {
+        press(findByTestId(root.container, 'btn-close-filters'));
+      });
+      expect(hasTestId(root.container, 'filters-sheet')).toBe(false);
+
+      // 2. Abrir hoja de Ordenar
+      await act(async () => {
+        press(findByTestId(root.container, 'btn-sort'));
+      });
+      expect(hasTestId(root.container, 'sort-sheet')).toBe(true);
+      expect(textOf(findByTestId(root.container, 'sort-sheet-title'))).toContain('Ordenar');
+
+      // Cerrar hoja de Ordenar
+      await act(async () => {
+        press(findByTestId(root.container, 'btn-close-sort'));
+      });
+      expect(hasTestId(root.container, 'sort-sheet')).toBe(false);
+    });
+
+    it('permite seleccionar rubro, tipo de evento, rango de precio, calificación y solo verificados, y aplica a la consulta (criterios 2.1 a 2.5, 2.7 y 5)', async () => {
+      const spy = jest.spyOn(endpoints, 'getProviders').mockResolvedValue({
+        items: [makeProvider(1)],
+        total: 1,
+        page: 1,
+        page_size: 10,
+      });
+
+      const root = createRoot();
+      await act(async () => {
+        root.render(
+          <FlowProvider>
+            <ResultadosScreen />
+          </FlowProvider>,
+        );
+      });
+
+      // Abre Filtros
+      await act(async () => {
+        press(findByTestId(root.container, 'btn-filters'));
+      });
+
+      // Selecciona rubro decoracion
+      await act(async () => {
+        press(findByTestId(root.container, 'filter-rubro-decoracion'));
+      });
+      expect(findByTestId(root.container, 'filter-rubro-decoracion').props.accessibilityState).toMatchObject({
+        selected: true,
+      });
+
+      // Selecciona tipo de evento boda
+      await act(async () => {
+        press(findByTestId(root.container, 'filter-event-type-boda'));
+      });
+      expect(findByTestId(root.container, 'filter-event-type-boda').props.accessibilityState).toMatchObject({
+        selected: true,
+      });
+
+      // Ingresa rango de precio
+      await act(async () => {
+        findByTestId(root.container, 'input-min-price').props.onChangeText('1500000');
+        findByTestId(root.container, 'input-max-price').props.onChangeText('4500000');
+      });
+
+      // Selecciona calificación 4
+      await act(async () => {
+        press(findByTestId(root.container, 'filter-rating-4'));
+      });
+      expect(findByTestId(root.container, 'filter-rating-4').props.accessibilityState).toMatchObject({
+        selected: true,
+      });
+
+      // Activa switch solo verificados
+      await act(async () => {
+        press(findByTestId(root.container, 'toggle-only-verified'));
+      });
+
+      // Aplica los filtros
+      await act(async () => {
+        press(findByTestId(root.container, 'btn-apply-filters'));
+      });
+
+      // La hoja se cierra
+      expect(hasTestId(root.container, 'filters-sheet')).toBe(false);
+
+      // GET /providers es llamado con todos los filtros aplicados
+      expect(spy).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          category: 'decoracion',
+          event_type: 'boda',
+          min_price_cop: 1_500_000,
+          max_price_cop: 4_500_000,
+          min_rating: 4,
+          verified: true,
+          page: 1,
+          page_size: 10,
+        }),
+        expect.any(Object),
+      );
+    });
+
+    it('valida que precio mínimo no sea mayor que precio máximo y bloquea Aplicar mostrando mensaje literal (criterio 3.1 y 3.2)', async () => {
+      const spy = jest.spyOn(endpoints, 'getProviders').mockResolvedValue({
+        items: [makeProvider(1)],
+        total: 1,
+        page: 1,
+        page_size: 10,
+      });
+
+      const root = createRoot();
+      await act(async () => {
+        root.render(
+          <FlowProvider>
+            <ResultadosScreen />
+          </FlowProvider>,
+        );
+      });
+
+      // Abre Filtros
+      await act(async () => {
+        press(findByTestId(root.container, 'btn-filters'));
+      });
+
+      // Ingresa min > max
+      await act(async () => {
+        findByTestId(root.container, 'input-min-price').props.onChangeText('6000000');
+        findByTestId(root.container, 'input-max-price').props.onChangeText('2000000');
+      });
+
+      // Intenta aplicar
+      await act(async () => {
+        press(findByTestId(root.container, 'btn-apply-filters'));
+      });
+
+      // La hoja permanece abierta y muestra el error literal
+      expect(hasTestId(root.container, 'filters-sheet')).toBe(true);
+      expect(hasTestId(root.container, 'error-price-range')).toBe(true);
+      expect(textOf(findByTestId(root.container, 'error-price-range'))).toBe(
+        PRICE_MIN_GREATER_THAN_MAX_MESSAGE,
+      );
+      expect(textOf(findByTestId(root.container, 'error-price-range'))).toBe(
+        'El precio mínimo no puede ser mayor que el máximo.',
+      );
+
+      // Corrige precio max a 8000000 (> min 6000000)
+      await act(async () => {
+        findByTestId(root.container, 'input-max-price').props.onChangeText('8000000');
+      });
+
+      expect(hasTestId(root.container, 'error-price-range')).toBe(false);
+
+      // Ahora aplicar procede exitosamente
+      await act(async () => {
+        press(findByTestId(root.container, 'btn-apply-filters'));
+      });
+
+      expect(hasTestId(root.container, 'filters-sheet')).toBe(false);
+      expect(spy).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          min_price_cop: 6_000_000,
+          max_price_cop: 8_000_000,
+        }),
+        expect.any(Object),
+      );
+    });
+
+    it.each([
+      ['recomendados', 'sort-option-recomendados'],
+      ['precio_asc', 'sort-option-precio_asc'],
+      ['precio_desc', 'sort-option-precio_desc'],
+      ['calificacion', 'sort-option-calificacion'],
+    ] as const)(
+      'permite seleccionar el orden %s y lo envía a la consulta según RN-26 (criterios 2.6 y 3.3)',
+      async (sortOrder, sortOptionTestId) => {
+        const spy = jest.spyOn(endpoints, 'getProviders').mockResolvedValue({
+          items: [makeProvider(1)],
+          total: 1,
+          page: 1,
+          page_size: 10,
+        });
+
+        const root = createRoot();
+        await act(async () => {
+          root.render(
+            <FlowProvider>
+              <ResultadosScreen />
+            </FlowProvider>,
+          );
+        });
+
+        // Abre hoja de Ordenar
+        await act(async () => {
+          press(findByTestId(root.container, 'btn-sort'));
+        });
+
+        // Selecciona la opción
+        await act(async () => {
+          press(findByTestId(root.container, sortOptionTestId));
+        });
+
+        // Aplica
+        await act(async () => {
+          press(findByTestId(root.container, 'btn-apply-sort'));
+        });
+
+        expect(hasTestId(root.container, 'sort-sheet')).toBe(false);
+        expect(spy).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            sort: sortOrder,
+            page: 1,
+          }),
+          expect.any(Object),
+        );
+      },
+    );
+
+    it('muestra chips con los filtros activos y permite quitar un filtro a la vez actualizando la lista (criterios 2.7 y 5)', async () => {
+      const spy = jest.spyOn(endpoints, 'getProviders').mockResolvedValue({
+        items: [makeProvider(1)],
+        total: 1,
+        page: 1,
+        page_size: 10,
+      });
+
+      const root = createRoot();
+      await act(async () => {
+        root.render(
+          <FlowProvider>
+            <FlowHarness
+              initial={{
+                filters: {
+                  category: 'espacio',
+                  event_type: 'boda',
+                  min_price_cop: 1_000_000,
+                  max_price_cop: 5_000_000,
+                  min_rating: 4,
+                  verified: true,
+                  sort: 'precio_asc',
+                },
+              }}
+            />
+          </FlowProvider>,
+        );
+      });
+
+      await act(async () => {
+        press(findByTestId(root.container, 'seed-flow'));
+      });
+
+      // Verifica presencia de chips activos
+      expect(hasTestId(root.container, 'active-filters-chips')).toBe(true);
+      expect(hasTestId(root.container, 'chip-category')).toBe(true);
+      expect(textOf(findByTestId(root.container, 'chip-category'))).toContain('Espacio');
+
+      expect(hasTestId(root.container, 'chip-event-type')).toBe(true);
+      expect(textOf(findByTestId(root.container, 'chip-event-type'))).toContain('Boda');
+
+      expect(hasTestId(root.container, 'chip-price')).toBe(true);
+      expect(textOf(findByTestId(root.container, 'chip-price'))).toContain('$1.000.000 - $5.000.000');
+
+      expect(hasTestId(root.container, 'chip-rating')).toBe(true);
+      expect(textOf(findByTestId(root.container, 'chip-rating'))).toContain('★ 4+');
+
+      expect(hasTestId(root.container, 'chip-verified')).toBe(true);
+      expect(textOf(findByTestId(root.container, 'chip-verified'))).toContain('Solo verificados');
+
+      expect(hasTestId(root.container, 'chip-sort')).toBe(true);
+      expect(textOf(findByTestId(root.container, 'chip-sort'))).toContain('Menor precio');
+
+      // 1. Quitar filtro de rubro
+      await act(async () => {
+        press(findByTestId(root.container, 'chip-remove-category'));
+      });
+
+      expect(hasTestId(root.container, 'chip-category')).toBe(false);
+      expect(hasTestId(root.container, 'chip-event-type')).toBe(true);
+      expect(spy).toHaveBeenLastCalledWith(
+        expect.not.objectContaining({ category: 'espacio' }),
+        expect.any(Object),
+      );
+
+      // 2. Quitar filtro de precio
+      await act(async () => {
+        press(findByTestId(root.container, 'chip-remove-price'));
+      });
+
+      expect(hasTestId(root.container, 'chip-price')).toBe(false);
+      expect(spy).toHaveBeenLastCalledWith(
+        expect.not.objectContaining({ min_price_cop: 1_000_000 }),
+        expect.any(Object),
+      );
+
+      // 3. Quitar filtro de calificación
+      await act(async () => {
+        press(findByTestId(root.container, 'chip-remove-rating'));
+      });
+
+      expect(hasTestId(root.container, 'chip-rating')).toBe(false);
+
+      // 4. Quitar filtro de verificación
+      await act(async () => {
+        press(findByTestId(root.container, 'chip-remove-verified'));
+      });
+
+      expect(hasTestId(root.container, 'chip-verified')).toBe(false);
+
+      // 5. Quitar filtro de orden
+      await act(async () => {
+        press(findByTestId(root.container, 'chip-remove-sort'));
+      });
+
+      expect(hasTestId(root.container, 'chip-sort')).toBe(false);
+    });
+
+    it('la acción Limpiar filtros dentro de la hoja restablece los campos del borrador (criterio 2.7)', async () => {
+      jest.spyOn(endpoints, 'getProviders').mockResolvedValue({
+        items: [makeProvider(1)],
+        total: 1,
+        page: 1,
+        page_size: 10,
+      });
+
+      const root = createRoot();
+      await act(async () => {
+        root.render(
+          <FlowProvider>
+            <FlowHarness
+              initial={{
+                filters: {
+                  category: 'espacio',
+                  min_price_cop: 2_000_000,
+                  min_rating: 4.5,
+                  verified: true,
+                },
+              }}
+            />
+          </FlowProvider>,
+        );
+      });
+
+      await act(async () => {
+        press(findByTestId(root.container, 'seed-flow'));
+      });
+
+      // Abre Filtros
+      await act(async () => {
+        press(findByTestId(root.container, 'btn-filters'));
+      });
+
+      // Presiona Limpiar filtros dentro de la hoja
+      await act(async () => {
+        press(findByTestId(root.container, 'btn-clear-filters-sheet'));
+      });
+
+      // Aplica los filtros limpios
+      await act(async () => {
+        press(findByTestId(root.container, 'btn-apply-filters'));
+      });
+
+      const snapshot = getFlowSnapshot(root.container);
+      expect(snapshot.filters.category).toBeUndefined();
+      expect(snapshot.filters.min_price_cop).toBeUndefined();
+      expect(snapshot.filters.min_rating).toBeUndefined();
+      expect(snapshot.filters.verified).toBeUndefined();
+    });
+
+    it('conserva los filtros y el orden elegidos al abrir una ficha y volver (criterio 4)', async () => {
+      jest.spyOn(endpoints, 'getProviders').mockResolvedValue({
+        items: [makeProvider(1, { id: 'prv-01' })],
+        total: 1,
+        page: 1,
+        page_size: 10,
+      });
+
+      const root = createRoot();
+      await act(async () => {
+        root.render(
+          <FlowProvider>
+            <FlowHarness
+              initial={{
+                filters: {
+                  category: 'espacio',
+                  sort: 'precio_desc',
+                },
+              }}
+            />
+          </FlowProvider>,
+        );
+      });
+
+      await act(async () => {
+        press(findByTestId(root.container, 'seed-flow'));
+      });
+
+      // Tocar la tarjeta navega a la ficha del proveedor
+      await act(async () => {
+        press(findByTestId(root.container, 'provider-card-prv-01'));
+      });
+
+      expect(mockNavigate).toHaveBeenCalledWith('Proveedor', { providerId: 'prv-01' });
+
+      // Los filtros y el orden permanecen intactos en el FlowContext al volver
+      const snapshot = getFlowSnapshot(root.container);
+      expect(snapshot.filters.category).toBe('espacio');
+      expect(snapshot.filters.sort).toBe('precio_desc');
     });
   });
 });

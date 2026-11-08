@@ -3,17 +3,27 @@ import { useNavigation, type CompositeNavigationProp } from '@react-navigation/n
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
+  TextInput,
   View,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
 import { GENERIC_ERROR, NetworkError } from '../api/client';
 import { getProviders } from '../api/endpoints';
-import type { ProviderSummary, ProvidersQuery } from '../api/types';
+import type {
+  Category,
+  EventType,
+  ProviderSummary,
+  ProvidersQuery,
+  SortOrder,
+} from '../api/types';
+import { FieldError } from '../components/FieldError';
 import { LoadingNotice } from '../components/LoadingNotice';
 import { MinimalIcon } from '../components/MinimalIcon';
 import { NetworkErrorView } from '../components/NetworkErrorView';
@@ -22,6 +32,8 @@ import { PROVIDERS_PAGE_SIZE } from '../config/limits';
 import type { RootStackParamList, TabParamList } from '../navigation/types';
 import { useFlow } from '../state/FlowContext';
 import { colors, font, MIN_TOUCH, spacing } from '../theme';
+import { formatCOP } from '../utils/money';
+import { validatePriceRange } from '../utils/validators';
 
 type ResultadosNavigationProp = CompositeNavigationProp<
   BottomTabNavigationProp<TabParamList, 'Resultados'>,
@@ -35,11 +47,39 @@ const surfaceTokens = {
   accentSurface: '#F3F0FF',
   accentBorder: '#D4C9FA',
   accentText: '#3A2399',
+  chipBg: '#EDE9FE',
+  chipBorder: '#DDD6FE',
+  chipText: '#432874',
 };
 
+export const CATEGORY_LABELS: Record<Category, string> = {
+  espacio: 'Espacio',
+  alimentacion: 'Alimentación',
+  decoracion: 'Decoración',
+  entretenimiento: 'Entretenimiento',
+};
+
+export const EVENT_TYPE_LABELS: Record<EventType, string> = {
+  cumpleanos: 'Cumpleaños',
+  boda: 'Boda',
+  xv: 'XV años',
+};
+
+export const SORT_LABELS: Record<SortOrder, string> = {
+  recomendados: 'Recomendados',
+  precio_asc: 'Menor precio',
+  precio_desc: 'Mayor precio',
+  calificacion: 'Mejor calificados',
+};
+
+const CATEGORIES: Category[] = ['espacio', 'alimentacion', 'decoracion', 'entretenimiento'];
+const EVENT_TYPES: EventType[] = ['cumpleanos', 'boda', 'xv'];
+const RATINGS = [3, 4, 4.5];
+const SORTS: SortOrder[] = ['recomendados', 'precio_asc', 'precio_desc', 'calificacion'];
+
 /**
- * HU_EU_02_05: pantalla 'Resultados' con tarjetas de proveedor, contador 'N resultados',
- * acceso a filtros/orden (HU_EU_02_15), conmutador 'Lista / Mapa' (HU_EU_03_14),
+ * HU_EU_02_05 y HU_EU_02_15: pantalla 'Resultados' con tarjetas de proveedor, contador 'N resultados',
+ * hoja de 'Filtros', hoja de 'Ordenar', chips con filtros activos, conmutador 'Lista / Mapa',
  * estado vacío y paginación de 10 en 10.
  */
 export default function ResultadosScreen() {
@@ -56,6 +96,22 @@ export default function ResultadosScreen() {
   const [slow, setSlow] = useState<boolean>(false);
   const [networkError, setNetworkError] = useState<string | null>(null);
   const [unexpectedError, setUnexpectedError] = useState<string | null>(null);
+
+  // Estados de apertura de hojas inferiores (criterio 1)
+  const [isFiltersOpen, setIsFiltersOpen] = useState<boolean>(false);
+  const [isSortOpen, setIsSortOpen] = useState<boolean>(false);
+
+  // Estados temporales del borrador de filtros (hoja de filtros)
+  const [draftCategory, setDraftCategory] = useState<Category | undefined>(undefined);
+  const [draftEventType, setDraftEventType] = useState<EventType | undefined>(undefined);
+  const [draftMinPrice, setDraftMinPrice] = useState<string>('');
+  const [draftMaxPrice, setDraftMaxPrice] = useState<string>('');
+  const [draftMinRating, setDraftMinRating] = useState<number | undefined>(undefined);
+  const [draftVerified, setDraftVerified] = useState<boolean>(false);
+  const [priceError, setPriceError] = useState<string | null>(null);
+
+  // Estado temporal del borrador de orden (hoja de ordenar)
+  const [draftSort, setDraftSort] = useState<SortOrder>('recomendados');
 
   const baseQuery = useMemo<ProvidersQuery>(() => {
     const query: ProvidersQuery = { ...flow.filters };
@@ -194,177 +250,736 @@ export default function ResultadosScreen() {
     }
   };
 
+  // Abrir hoja de filtros inicializando el borrador con el estado actual
+  const handleOpenFilters = () => {
+    setDraftCategory(flow.filters.category);
+    setDraftEventType(flow.filters.event_type ?? flow.eventType ?? undefined);
+    setDraftMinPrice(
+      flow.filters.min_price_cop !== undefined ? String(flow.filters.min_price_cop) : '',
+    );
+    setDraftMaxPrice(
+      flow.filters.max_price_cop !== undefined ? String(flow.filters.max_price_cop) : '',
+    );
+    setDraftMinRating(flow.filters.min_rating);
+    setDraftVerified(!!flow.filters.verified);
+    setPriceError(null);
+    setIsFiltersOpen(true);
+  };
+
+  // Aplicar filtros validados (criterios 2.7, 3.1, 3.2 y 5)
+  const handleApplyFilters = async () => {
+    const minVal = draftMinPrice.trim() !== '' ? parseInt(draftMinPrice, 10) : null;
+    const maxVal = draftMaxPrice.trim() !== '' ? parseInt(draftMaxPrice, 10) : null;
+
+    const validationError = validatePriceRange(minVal, maxVal);
+    if (validationError) {
+      setPriceError(validationError);
+      return;
+    }
+
+    const nextFilters: ProvidersQuery = {
+      ...flow.filters,
+      category: draftCategory,
+      event_type: draftEventType,
+      min_price_cop: minVal ?? undefined,
+      max_price_cop: maxVal ?? undefined,
+      min_rating: draftMinRating,
+      verified: draftVerified ? true : undefined,
+    };
+
+    (Object.keys(nextFilters) as (keyof ProvidersQuery)[]).forEach((key) => {
+      if (nextFilters[key] === undefined) {
+        delete nextFilters[key];
+      }
+    });
+
+    update({
+      filters: nextFilters,
+      eventType: draftEventType ?? null,
+    });
+    setIsFiltersOpen(false);
+  };
+
+  // Limpiar filtros dentro de la hoja (criterio 2.7)
+  const handleClearFiltersSheet = () => {
+    setDraftCategory(undefined);
+    setDraftEventType(undefined);
+    setDraftMinPrice('');
+    setDraftMaxPrice('');
+    setDraftMinRating(undefined);
+    setDraftVerified(false);
+    setPriceError(null);
+  };
+
+  // Abrir hoja de ordenar
+  const handleOpenSort = () => {
+    setDraftSort(flow.filters.sort ?? 'recomendados');
+    setIsSortOpen(true);
+  };
+
+  // Aplicar orden seleccionado (criterios 2.6, 3.3 y 5)
+  const handleApplySort = async (order?: SortOrder) => {
+    const targetSort = order ?? draftSort;
+    const nextFilters: ProvidersQuery = {
+      ...flow.filters,
+      sort: targetSort,
+    };
+    update({ filters: nextFilters });
+    setIsSortOpen(false);
+  };
+
+  // Construcción de chips activos (criterios 2.7 y 5)
+  const activeChips = useMemo(() => {
+    const list: {
+      id: string;
+      label: string;
+      testID: string;
+      removeTestID: string;
+      onRemove: () => Promise<void>;
+    }[] = [];
+
+    if (flow.filters.category) {
+      list.push({
+        id: 'category',
+        label: CATEGORY_LABELS[flow.filters.category],
+        testID: 'chip-category',
+        removeTestID: 'chip-remove-category',
+        onRemove: async () => {
+          const next = { ...flow.filters };
+          delete next.category;
+          update({ filters: next });
+        },
+      });
+    }
+
+    const currentEventType = flow.filters.event_type ?? flow.eventType;
+    if (currentEventType) {
+      list.push({
+        id: 'event_type',
+        label: EVENT_TYPE_LABELS[currentEventType],
+        testID: 'chip-event-type',
+        removeTestID: 'chip-remove-event-type',
+        onRemove: async () => {
+          const next = { ...flow.filters };
+          delete next.event_type;
+          update({ filters: next, eventType: null });
+        },
+      });
+    }
+
+    const hasMinPrice = flow.filters.min_price_cop !== undefined;
+    const hasMaxPrice = flow.filters.max_price_cop !== undefined;
+    if (hasMinPrice || hasMaxPrice) {
+      let priceLabel = '';
+      if (hasMinPrice && hasMaxPrice) {
+        priceLabel = `${formatCOP(flow.filters.min_price_cop!)} - ${formatCOP(flow.filters.max_price_cop!)}`;
+      } else if (hasMinPrice) {
+        priceLabel = `Desde ${formatCOP(flow.filters.min_price_cop!)}`;
+      } else {
+        priceLabel = `Hasta ${formatCOP(flow.filters.max_price_cop!)}`;
+      }
+      list.push({
+        id: 'price',
+        label: priceLabel,
+        testID: 'chip-price',
+        removeTestID: 'chip-remove-price',
+        onRemove: async () => {
+          const next = { ...flow.filters };
+          delete next.min_price_cop;
+          delete next.max_price_cop;
+          update({ filters: next });
+        },
+      });
+    }
+
+    if (flow.filters.min_rating !== undefined) {
+      list.push({
+        id: 'min_rating',
+        label: `★ ${flow.filters.min_rating}+`,
+        testID: 'chip-rating',
+        removeTestID: 'chip-remove-rating',
+        onRemove: async () => {
+          const next = { ...flow.filters };
+          delete next.min_rating;
+          update({ filters: next });
+        },
+      });
+    }
+
+    if (flow.filters.verified) {
+      list.push({
+        id: 'verified',
+        label: 'Solo verificados',
+        testID: 'chip-verified',
+        removeTestID: 'chip-remove-verified',
+        onRemove: async () => {
+          const next = { ...flow.filters };
+          delete next.verified;
+          update({ filters: next });
+        },
+      });
+    }
+
+    if (flow.filters.sort && flow.filters.sort !== 'recomendados') {
+      list.push({
+        id: 'sort',
+        label: SORT_LABELS[flow.filters.sort],
+        testID: 'chip-sort',
+        removeTestID: 'chip-remove-sort',
+        onRemove: async () => {
+          const next = { ...flow.filters };
+          delete next.sort;
+          update({ filters: next });
+        },
+      });
+    }
+
+    return list;
+  }, [flow.filters, flow.eventType, update]);
+
+  const activeFiltersCount = activeChips.filter((c) => c.id !== 'sort').length;
+  const currentSortLabel = flow.filters.sort ? SORT_LABELS[flow.filters.sort] : 'Ordenar';
+
   const isEmpty =
     !loading && !networkError && !unexpectedError && items.length === 0;
 
   return (
-    <ScrollView
-      testID="results-scroll"
-      style={styles.screen}
-      contentContainerStyle={styles.content}
-      onScroll={handleScroll}
-      scrollEventThrottle={160}
-    >
-      {/* Barra superior: contador 'N resultados' (criterio 2.2) y conmutador 'Lista / Mapa' (criterio 2.3) */}
-      <View style={styles.headerRow}>
-        <View style={styles.counterBlock}>
-          <Text style={styles.screenTitle}>Proveedores</Text>
-          <Text testID="results-count" style={styles.resultsCount}>
-            {total} resultados
-          </Text>
-        </View>
+    <>
+      <ScrollView
+        testID="results-scroll"
+        style={styles.screen}
+        contentContainerStyle={styles.content}
+        onScroll={handleScroll}
+        scrollEventThrottle={160}
+      >
+        {/* Barra superior: contador 'N resultados' y conmutador 'Lista / Mapa' */}
+        <View style={styles.headerRow}>
+          <View style={styles.counterBlock}>
+            <Text style={styles.screenTitle}>Proveedores</Text>
+            <Text testID="results-count" style={styles.resultsCount}>
+              {total} resultados
+            </Text>
+          </View>
 
-        <View
-          testID="toggle-view-mode"
-          accessibilityRole="tablist"
-          style={styles.viewToggle}
-        >
-          <Pressable
-            testID="btn-view-lista"
-            onPress={() => setViewMode('lista')}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: viewMode === 'lista' }}
-            style={[
-              styles.viewToggleOption,
-              viewMode === 'lista' ? styles.viewToggleOptionActive : null,
-            ]}
+          <View
+            testID="toggle-view-mode"
+            accessibilityRole="tablist"
+            style={styles.viewToggle}
           >
-            <Text
+            <Pressable
+              testID="btn-view-lista"
+              onPress={() => setViewMode('lista')}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: viewMode === 'lista' }}
               style={[
-                styles.viewToggleText,
-                viewMode === 'lista' ? styles.viewToggleTextActive : null,
+                styles.viewToggleOption,
+                viewMode === 'lista' ? styles.viewToggleOptionActive : null,
               ]}
             >
-              Lista
-            </Text>
-          </Pressable>
-          <Pressable
-            testID="btn-view-mapa"
-            onPress={() => setViewMode('mapa')}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: viewMode === 'mapa' }}
-            style={[
-              styles.viewToggleOption,
-              viewMode === 'mapa' ? styles.viewToggleOptionActive : null,
-            ]}
-          >
-            <Text
+              <Text
+                style={[
+                  styles.viewToggleText,
+                  viewMode === 'lista' ? styles.viewToggleTextActive : null,
+                ]}
+              >
+                Lista
+              </Text>
+            </Pressable>
+            <Pressable
+              testID="btn-view-mapa"
+              onPress={() => setViewMode('mapa')}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: viewMode === 'mapa' }}
               style={[
-                styles.viewToggleText,
-                viewMode === 'mapa' ? styles.viewToggleTextActive : null,
+                styles.viewToggleOption,
+                viewMode === 'mapa' ? styles.viewToggleOptionActive : null,
               ]}
             >
-              Mapa
-            </Text>
-          </Pressable>
+              <Text
+                style={[
+                  styles.viewToggleText,
+                  viewMode === 'mapa' ? styles.viewToggleTextActive : null,
+                ]}
+              >
+                Mapa
+              </Text>
+            </Pressable>
+          </View>
         </View>
-      </View>
 
-      {/* Accesos a Filtros y Ordenar (criterio 2.3 — HU_EU_02_15) */}
-      <View style={styles.toolbarRow}>
-        <Pressable
-          testID="btn-filters"
-          onPress={() => {}}
-          accessibilityRole="button"
-          style={({ pressed }) => [
-            styles.toolbarButton,
-            pressed ? styles.buttonPressed : null,
-          ]}
-        >
-          <MinimalIcon name="search" size={16} color={colors.text} />
-          <Text style={styles.toolbarButtonText}>Filtros</Text>
-        </Pressable>
-
-        <Pressable
-          testID="btn-sort"
-          onPress={() => {}}
-          accessibilityRole="button"
-          style={({ pressed }) => [
-            styles.toolbarButton,
-            pressed ? styles.buttonPressed : null,
-          ]}
-        >
-          <MinimalIcon name="decor" size={16} color={colors.text} />
-          <Text style={styles.toolbarButtonText}>Ordenar</Text>
-        </Pressable>
-      </View>
-
-      {/* Estado de carga inicial o de paginación */}
-      {loading ? <LoadingNotice slow={slow} /> : null}
-
-      {/* Error de red (HU_EU_01_04, criterio 6) */}
-      {networkError ? (
-        <NetworkErrorView message={networkError} onRetry={handleRetry} />
-      ) : null}
-
-      {/* Error inesperado (criterio 6) */}
-      {unexpectedError ? (
-        <View style={styles.errorBanner} accessibilityRole="alert">
-          <Text style={styles.errorBannerText}>{unexpectedError}</Text>
+        {/* Accesos a Filtros y Ordenar (criterio 1 — HU_EU_02_15) */}
+        <View style={styles.toolbarRow}>
           <Pressable
-            testID="btn-retry-providers"
-            onPress={handleRetry}
-            accessibilityRole="button"
-            style={styles.primaryActionButton}
-          >
-            <Text style={styles.primaryActionText}>Reintentar</Text>
-          </Pressable>
-        </View>
-      ) : null}
-
-      {/* Estado vacío con mensaje literal y acción 'Limpiar filtros' (criterio 6) */}
-      {isEmpty ? (
-        <View testID="empty-results" style={styles.emptyCard}>
-          <Text style={styles.emptyMessage}>
-            No encontramos proveedores con esos criterios.
-          </Text>
-          <Pressable
-            testID="btn-clear-filters"
-            onPress={handleClearFilters}
+            testID="btn-filters"
+            onPress={handleOpenFilters}
             accessibilityRole="button"
             style={({ pressed }) => [
-              styles.primaryActionButton,
+              styles.toolbarButton,
+              activeFiltersCount > 0 ? styles.toolbarButtonActive : null,
               pressed ? styles.buttonPressed : null,
             ]}
           >
-            <Text style={styles.primaryActionText}>Limpiar filtros</Text>
+            <MinimalIcon
+              name="search"
+              size={16}
+              color={activeFiltersCount > 0 ? surfaceTokens.accentText : colors.text}
+            />
+            <Text
+              style={[
+                styles.toolbarButtonText,
+                activeFiltersCount > 0 ? styles.toolbarButtonTextActive : null,
+              ]}
+            >
+              {activeFiltersCount > 0 ? `Filtros (${activeFiltersCount})` : 'Filtros'}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            testID="btn-sort"
+            onPress={handleOpenSort}
+            accessibilityRole="button"
+            style={({ pressed }) => [
+              styles.toolbarButton,
+              flow.filters.sort && flow.filters.sort !== 'recomendados'
+                ? styles.toolbarButtonActive
+                : null,
+              pressed ? styles.buttonPressed : null,
+            ]}
+          >
+            <MinimalIcon
+              name="decor"
+              size={16}
+              color={
+                flow.filters.sort && flow.filters.sort !== 'recomendados'
+                  ? surfaceTokens.accentText
+                  : colors.text
+              }
+            />
+            <Text
+              style={[
+                styles.toolbarButtonText,
+                flow.filters.sort && flow.filters.sort !== 'recomendados'
+                  ? styles.toolbarButtonTextActive
+                  : null,
+              ]}
+            >
+              {flow.filters.sort && flow.filters.sort !== 'recomendados'
+                ? currentSortLabel
+                : 'Ordenar'}
+            </Text>
           </Pressable>
         </View>
-      ) : null}
 
-      {/* Lista de tarjetas de proveedor (criterios 2.1 y 5) */}
-      {items.length > 0 ? (
-        <View style={styles.cardsList}>
-          {items.map((provider) => (
-            <ProviderCard
-              key={provider.id}
-              provider={provider}
-              onPress={handleProviderPress}
-            />
-          ))}
+        {/* Chips con los filtros activos (criterios 2.7 y 5) */}
+        {activeChips.length > 0 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.activeChipsScroll}
+            contentContainerStyle={styles.activeChipsContent}
+            testID="active-filters-chips"
+          >
+            {activeChips.map((chip) => (
+              <View key={chip.id} style={styles.activeChip} testID={chip.testID}>
+                <Text style={styles.activeChipText}>{chip.label}</Text>
+                <Pressable
+                  testID={chip.removeTestID}
+                  onPress={() => void chip.onRemove()}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Quitar filtro ${chip.label}`}
+                  style={styles.activeChipRemoveBtn}
+                >
+                  <Text style={styles.activeChipRemoveText}>✕</Text>
+                </Pressable>
+              </View>
+            ))}
+            <Pressable
+              testID="btn-clear-all-chips"
+              onPress={() => void handleClearFilters()}
+              accessibilityRole="button"
+              style={styles.clearAllChip}
+            >
+              <Text style={styles.clearAllChipText}>Limpiar filtros</Text>
+            </Pressable>
+          </ScrollView>
+        ) : null}
+
+        {/* Estado de carga inicial o de paginación */}
+        {loading ? <LoadingNotice slow={slow} /> : null}
+
+        {/* Error de red (HU_EU_01_04, criterio 6) */}
+        {networkError ? (
+          <NetworkErrorView message={networkError} onRetry={handleRetry} />
+        ) : null}
+
+        {/* Error inesperado (criterio 6) */}
+        {unexpectedError ? (
+          <View style={styles.errorBanner} accessibilityRole="alert">
+            <Text style={styles.errorBannerText}>{unexpectedError}</Text>
+            <Pressable
+              testID="btn-retry-providers"
+              onPress={handleRetry}
+              accessibilityRole="button"
+              style={styles.primaryActionButton}
+            >
+              <Text style={styles.primaryActionText}>Reintentar</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        {/* Estado vacío con mensaje literal y acción 'Limpiar filtros' (criterio 6) */}
+        {isEmpty ? (
+          <View testID="empty-results" style={styles.emptyCard}>
+            <Text style={styles.emptyMessage}>
+              No encontramos proveedores con esos criterios.
+            </Text>
+            <Pressable
+              testID="btn-clear-filters"
+              onPress={handleClearFilters}
+              accessibilityRole="button"
+              style={({ pressed }) => [
+                styles.primaryActionButton,
+                pressed ? styles.buttonPressed : null,
+              ]}
+            >
+              <Text style={styles.primaryActionText}>Limpiar filtros</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        {/* Lista de tarjetas de proveedor (criterios 2.1 y 5) */}
+        {items.length > 0 ? (
+          <View style={styles.cardsList}>
+            {items.map((provider) => (
+              <ProviderCard
+                key={provider.id}
+                provider={provider}
+                onPress={handleProviderPress}
+              />
+            ))}
+          </View>
+        ) : null}
+
+        {/* Paginación de 10 en 10 al llegar al final (criterio 5) */}
+        {loadingMore ? <LoadingNotice slow={slow} /> : null}
+
+        {hasMore && !loading ? (
+          <Pressable
+            testID="btn-load-more"
+            onPress={handleLoadMore}
+            disabled={loadingMore}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: loadingMore }}
+            style={({ pressed }) => [
+              styles.loadMoreButton,
+              loadingMore ? styles.buttonDisabled : null,
+              pressed ? styles.buttonPressed : null,
+            ]}
+          >
+            <Text style={styles.loadMoreText}>Mostrar más proveedores</Text>
+          </Pressable>
+        ) : null}
+      </ScrollView>
+
+      {/* Hoja de Filtros (criterio 1, 2 y 3) */}
+      <Modal
+        visible={isFiltersOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setIsFiltersOpen(false)}
+        testID="modal-filters"
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.sheetContainer} testID="filters-sheet">
+            <View style={styles.sheetHandle} />
+
+            {/* Cabecera */}
+            <View style={styles.sheetHeader}>
+              <Text style={styles.sheetTitle} testID="filters-sheet-title">
+                Filtros
+              </Text>
+              <Pressable
+                testID="btn-close-filters"
+                onPress={() => setIsFiltersOpen(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Cerrar filtros"
+                style={styles.sheetCloseButton}
+              >
+                <Text style={styles.sheetCloseText}>✕</Text>
+              </Pressable>
+            </View>
+
+            <ScrollView
+              style={styles.sheetBody}
+              contentContainerStyle={styles.sheetBodyContent}
+              showsVerticalScrollIndicator={false}
+            >
+              {/* 2.1 Filtro por rubro */}
+              <View style={styles.sectionBlock}>
+                <Text style={styles.sectionLabel}>Rubro</Text>
+                <View style={styles.optionsRow}>
+                  {CATEGORIES.map((cat) => {
+                    const selected = draftCategory === cat;
+                    return (
+                      <Pressable
+                        key={cat}
+                        testID={`filter-rubro-${cat}`}
+                        onPress={() =>
+                          setDraftCategory((prev) => (prev === cat ? undefined : cat))
+                        }
+                        accessibilityRole="button"
+                        accessibilityState={{ selected }}
+                        style={[
+                          styles.optionChip,
+                          selected ? styles.optionChipSelected : null,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.optionChipText,
+                            selected ? styles.optionChipTextSelected : null,
+                          ]}
+                        >
+                          {CATEGORY_LABELS[cat]}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* 2.2 Filtro por tipo de evento */}
+              <View style={styles.sectionBlock}>
+                <Text style={styles.sectionLabel}>Tipo de evento</Text>
+                <View style={styles.optionsRow}>
+                  {EVENT_TYPES.map((type) => {
+                    const selected = draftEventType === type;
+                    return (
+                      <Pressable
+                        key={type}
+                        testID={`filter-event-type-${type}`}
+                        onPress={() =>
+                          setDraftEventType((prev) => (prev === type ? undefined : type))
+                        }
+                        accessibilityRole="button"
+                        accessibilityState={{ selected }}
+                        style={[
+                          styles.optionChip,
+                          selected ? styles.optionChipSelected : null,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.optionChipText,
+                            selected ? styles.optionChipTextSelected : null,
+                          ]}
+                        >
+                          {EVENT_TYPE_LABELS[type]}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* 2.3 Filtro por rango de precio (enteros) y validación (3.1 y 3.2) */}
+              <View style={styles.sectionBlock}>
+                <Text style={styles.sectionLabel}>Rango de precio</Text>
+                <View style={styles.priceRow}>
+                  <View style={styles.priceField}>
+                    <Text style={styles.fieldSubLabel}>Mínimo</Text>
+                    <TextInput
+                      testID="input-min-price"
+                      value={draftMinPrice}
+                      onChangeText={(val) => {
+                        setDraftMinPrice(val.replace(/[^0-9]/g, ''));
+                        setPriceError(null);
+                      }}
+                      keyboardType="number-pad"
+                      placeholder="COP min"
+                      placeholderTextColor={colors.muted}
+                      accessibilityLabel="Precio mínimo"
+                      style={styles.priceInput}
+                    />
+                  </View>
+                  <View style={styles.priceField}>
+                    <Text style={styles.fieldSubLabel}>Máximo</Text>
+                    <TextInput
+                      testID="input-max-price"
+                      value={draftMaxPrice}
+                      onChangeText={(val) => {
+                        setDraftMaxPrice(val.replace(/[^0-9]/g, ''));
+                        setPriceError(null);
+                      }}
+                      keyboardType="number-pad"
+                      placeholder="COP max"
+                      placeholderTextColor={colors.muted}
+                      accessibilityLabel="Precio máximo"
+                      style={styles.priceInput}
+                    />
+                  </View>
+                </View>
+                {priceError ? (
+                  <View testID="error-price-range">
+                    <FieldError message={priceError} />
+                  </View>
+                ) : null}
+              </View>
+
+              {/* 2.4 Filtro por calificación mínima */}
+              <View style={styles.sectionBlock}>
+                <Text style={styles.sectionLabel}>Calificación mínima</Text>
+                <View style={styles.optionsRow}>
+                  {RATINGS.map((rate) => {
+                    const selected = draftMinRating === rate;
+                    const idStr = String(rate);
+                    return (
+                      <Pressable
+                        key={rate}
+                        testID={`filter-rating-${idStr}`}
+                        onPress={() =>
+                          setDraftMinRating((prev) => (prev === rate ? undefined : rate))
+                        }
+                        accessibilityRole="button"
+                        accessibilityState={{ selected }}
+                        style={[
+                          styles.optionChip,
+                          selected ? styles.optionChipSelected : null,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.optionChipText,
+                            selected ? styles.optionChipTextSelected : null,
+                          ]}
+                        >
+                          {rate === 4.5 ? '★ 4,5+' : `★ ${rate}+`}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* 2.5 Interruptor 'Solo verificados' */}
+              <Pressable
+                testID="toggle-only-verified"
+                onPress={() => setDraftVerified((prev) => !prev)}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: draftVerified }}
+                accessibilityLabel="Solo verificados"
+                style={styles.switchRow}
+              >
+                <Text style={styles.switchLabel}>Solo verificados</Text>
+                <Switch
+                  value={draftVerified}
+                  onValueChange={setDraftVerified}
+                  accessibilityElementsHidden
+                  importantForAccessibility="no"
+                  trackColor={{ false: colors.border, true: surfaceTokens.accentBorder }}
+                  thumbColor={draftVerified ? colors.primary : colors.muted}
+                />
+              </Pressable>
+            </ScrollView>
+
+            {/* Acciones 'Aplicar' y 'Limpiar filtros' (criterio 2.7) */}
+            <View style={styles.sheetFooter}>
+              <Pressable
+                testID="btn-clear-filters-sheet"
+                onPress={handleClearFiltersSheet}
+                accessibilityRole="button"
+                style={styles.sheetClearButton}
+              >
+                <Text style={styles.sheetClearButtonText}>Limpiar filtros</Text>
+              </Pressable>
+
+              <Pressable
+                testID="btn-apply-filters"
+                onPress={() => void handleApplyFilters()}
+                accessibilityRole="button"
+                style={styles.sheetApplyButton}
+              >
+                <Text style={styles.sheetApplyButtonText}>Aplicar</Text>
+              </Pressable>
+            </View>
+          </View>
         </View>
-      ) : null}
+      </Modal>
 
-      {/* Paginación de 10 en 10 al llegar al final (criterio 5) */}
-      {loadingMore ? <LoadingNotice slow={slow} /> : null}
+      {/* Hoja de Ordenar (criterios 1, 2.6 y 3.3) */}
+      <Modal
+        visible={isSortOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setIsSortOpen(false)}
+        testID="modal-sort"
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.sheetContainer} testID="sort-sheet">
+            <View style={styles.sheetHandle} />
 
-      {hasMore && !loading ? (
-        <Pressable
-          testID="btn-load-more"
-          onPress={handleLoadMore}
-          disabled={loadingMore}
-          accessibilityRole="button"
-          accessibilityState={{ disabled: loadingMore }}
-          style={({ pressed }) => [
-            styles.loadMoreButton,
-            loadingMore ? styles.buttonDisabled : null,
-            pressed ? styles.buttonPressed : null,
-          ]}
-        >
-          <Text style={styles.loadMoreText}>Mostrar más proveedores</Text>
-        </Pressable>
-      ) : null}
-    </ScrollView>
+            <View style={styles.sheetHeader}>
+              <Text style={styles.sheetTitle} testID="sort-sheet-title">
+                Ordenar por
+              </Text>
+              <Pressable
+                testID="btn-close-sort"
+                onPress={() => setIsSortOpen(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Cerrar ordenar"
+                style={styles.sheetCloseButton}
+              >
+                <Text style={styles.sheetCloseText}>✕</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.sortOptionsList}>
+              {SORTS.map((sortOption) => {
+                const selected = draftSort === sortOption;
+                return (
+                  <Pressable
+                    key={sortOption}
+                    testID={`sort-option-${sortOption}`}
+                    onPress={() => setDraftSort(sortOption)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected }}
+                    style={[
+                      styles.sortOptionRow,
+                      selected ? styles.sortOptionRowSelected : null,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.sortOptionText,
+                        selected ? styles.sortOptionTextSelected : null,
+                      ]}
+                    >
+                      {SORT_LABELS[sortOption]}
+                    </Text>
+                    {selected ? (
+                      <View style={styles.radioSelectedDot}>
+                        <MinimalIcon name="check" size={14} color={colors.primary} />
+                      </View>
+                    ) : null}
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <View style={styles.sheetFooter}>
+              <Pressable
+                testID="btn-apply-sort"
+                onPress={() => void handleApplySort()}
+                accessibilityRole="button"
+                style={styles.sheetApplyButton}
+              >
+                <Text style={styles.sheetApplyButtonText}>Aplicar</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </>
   );
 }
 
@@ -451,10 +1066,71 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: surfaceTokens.subtleBg,
   },
+  toolbarButtonActive: {
+    borderColor: surfaceTokens.accentBorder,
+    backgroundColor: surfaceTokens.accentSurface,
+  },
   toolbarButtonText: {
     fontSize: font.base,
     fontWeight: '600',
     color: colors.text,
+  },
+  toolbarButtonTextActive: {
+    color: surfaceTokens.accentText,
+    fontWeight: '700',
+  },
+  activeChipsScroll: {
+    maxHeight: MIN_TOUCH + 4,
+  },
+  activeChipsContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  activeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 36,
+    paddingLeft: spacing.sm + 2,
+    paddingRight: spacing.xs,
+    paddingVertical: 4,
+    borderRadius: 18,
+    backgroundColor: surfaceTokens.chipBg,
+    borderWidth: 1,
+    borderColor: surfaceTokens.chipBorder,
+    gap: spacing.xs,
+  },
+  activeChipText: {
+    fontSize: font.base - 2,
+    fontWeight: '600',
+    color: surfaceTokens.chipText,
+  },
+  activeChipRemoveBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  activeChipRemoveText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: surfaceTokens.chipText,
+  },
+  clearAllChip: {
+    minHeight: 36,
+    paddingHorizontal: spacing.md,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: surfaceTokens.subtleBg,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  clearAllChipText: {
+    fontSize: font.base - 2,
+    fontWeight: '600',
+    color: colors.muted,
   },
   errorBanner: {
     padding: spacing.md,
@@ -515,5 +1191,197 @@ const styles = StyleSheet.create({
     fontSize: font.base,
     fontWeight: '700',
     color: surfaceTokens.accentText,
+  },
+  // Estilos de modal y hojas inferiores
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    justifyContent: 'flex-end',
+  },
+  sheetContainer: {
+    backgroundColor: colors.background,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '85%',
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.lg,
+    gap: spacing.md,
+  },
+  sheetHandle: {
+    width: 44,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.border,
+    alignSelf: 'center',
+    marginVertical: spacing.xs,
+  },
+  sheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: spacing.xs,
+  },
+  sheetTitle: {
+    fontSize: font.title,
+    fontWeight: '800',
+    color: colors.text,
+  },
+  sheetCloseButton: {
+    width: MIN_TOUCH,
+    height: MIN_TOUCH,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sheetCloseText: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: colors.muted,
+  },
+  sheetBody: {
+    maxHeight: 400,
+  },
+  sheetBodyContent: {
+    gap: spacing.md,
+    paddingBottom: spacing.sm,
+  },
+  sectionBlock: {
+    gap: spacing.xs,
+  },
+  sectionLabel: {
+    fontSize: font.base,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  optionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  optionChip: {
+    minHeight: 40,
+    paddingHorizontal: spacing.md,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: surfaceTokens.subtleBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  optionChipSelected: {
+    backgroundColor: surfaceTokens.accentSurface,
+    borderColor: surfaceTokens.accentBorder,
+  },
+  optionChipText: {
+    fontSize: font.base - 1,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  optionChipTextSelected: {
+    color: surfaceTokens.accentText,
+    fontWeight: '700',
+  },
+  priceRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  priceField: {
+    flex: 1,
+    gap: 4,
+  },
+  fieldSubLabel: {
+    fontSize: font.base - 2,
+    color: colors.muted,
+    fontWeight: '500',
+  },
+  priceInput: {
+    minHeight: 44,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    paddingHorizontal: spacing.sm,
+    fontSize: font.base,
+    color: colors.text,
+    backgroundColor: surfaceTokens.subtleBg,
+  },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: spacing.xs,
+  },
+  switchLabel: {
+    fontSize: font.base,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  sheetFooter: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    paddingTop: spacing.xs,
+  },
+  sheetClearButton: {
+    flex: 1,
+    minHeight: MIN_TOUCH,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: surfaceTokens.subtleBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sheetClearButtonText: {
+    fontSize: font.base,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  sheetApplyButton: {
+    flex: 1,
+    minHeight: MIN_TOUCH,
+    borderRadius: 10,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sheetApplyButtonText: {
+    fontSize: font.base,
+    fontWeight: '700',
+    color: colors.background,
+  },
+  sortOptionsList: {
+    gap: spacing.xs,
+    paddingVertical: spacing.xs,
+  },
+  sortOptionRow: {
+    minHeight: MIN_TOUCH,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: surfaceTokens.subtleBg,
+  },
+  sortOptionRowSelected: {
+    backgroundColor: surfaceTokens.accentSurface,
+    borderColor: surfaceTokens.accentBorder,
+  },
+  sortOptionText: {
+    fontSize: font.base,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  sortOptionTextSelected: {
+    color: surfaceTokens.accentText,
+    fontWeight: '700',
+  },
+  radioSelectedDot: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: surfaceTokens.accentSurface,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

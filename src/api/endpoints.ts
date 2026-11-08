@@ -7,7 +7,6 @@ import type {
   Provider,
   ProvidersQuery,
   ProvidersResponse,
-  Package,
   QuoteRequest,
   Quote,
   RecommendationRequest,

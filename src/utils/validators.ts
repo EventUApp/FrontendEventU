@@ -60,3 +60,22 @@ export function validateEventDate(
   const todayISO = options?.today ?? getLocalTodayISO();
   return trimmed > todayISO ? null : msg;
 }
+
+/** Mensaje literal de HU_EU_02_15 (criterio 3.1). */
+export const PRICE_MIN_GREATER_THAN_MAX_MESSAGE =
+  'El precio mínimo no puede ser mayor que el máximo.';
+
+/**
+ * Valida que el precio mínimo no sea mayor que el precio máximo (criterio 3.1).
+ * Ambos parámetros son opcionales (enteros en COP).
+ */
+export function validatePriceRange(
+  minCop: number | null,
+  maxCop: number | null,
+): string | null {
+  if (minCop !== null && maxCop !== null && minCop > maxCop) {
+    return PRICE_MIN_GREATER_THAN_MAX_MESSAGE;
+  }
+  return null;
+}
+

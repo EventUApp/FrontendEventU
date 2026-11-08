@@ -1,9 +1,11 @@
 import { BUDGET_MAX_COP, BUDGET_MIN_COP, GUESTS_MAX, GUESTS_MIN } from '../src/config/limits';
 import {
+  PRICE_MIN_GREATER_THAN_MAX_MESSAGE,
   validateBudget,
   validateEventDate,
   validateEventType,
   validateGuests,
+  validatePriceRange,
 } from '../src/utils/validators';
 
 describe('validateBudget (RN-19, criterios 3.1 y 3.2)', () => {
@@ -122,4 +124,32 @@ describe('validateEventDate (RN-20, HU_EU_01_12 criterio 3.3)', () => {
       expect(validateEventDate(input, { optional: true, today: TODAY })).toBeNull();
     },
   );
+});
+
+describe('validatePriceRange (HU_EU_02_15, criterios 2.3, 3.1 y 3.2)', () => {
+  it('constante PRICE_MIN_GREATER_THAN_MAX_MESSAGE coincide exactamente con el criterio literal 3.1', () => {
+    expect(PRICE_MIN_GREATER_THAN_MAX_MESSAGE).toBe(
+      'El precio mínimo no puede ser mayor que el máximo.',
+    );
+  });
+
+  it.each([
+    [null, null, 'ambos nulos'],
+    [1_000_000, null, 'solo mínimo definido'],
+    [null, 5_000_000, 'solo máximo definido'],
+    [1_000_000, 1_000_000, 'mínimo igual a máximo'],
+    [500_000, 2_000_000, 'mínimo menor que máximo'],
+    [0, 10_000_000, 'mínimo cero'],
+  ])('acepta rangos válidos: %s y %s (%s)', (min, max, _desc) => {
+    expect(validatePriceRange(min, max)).toBeNull();
+  });
+
+  it.each([
+    [2_000_000, 1_000_000],
+    [5_000_001, 5_000_000],
+    [10_000_000, 0],
+    [100_000_000, 50_000_000],
+  ])('rechaza cuando min (%d) > max (%d) con mensaje literal', (min, max) => {
+    expect(validatePriceRange(min, max)).toBe('El precio mínimo no puede ser mayor que el máximo.');
+  });
 });
