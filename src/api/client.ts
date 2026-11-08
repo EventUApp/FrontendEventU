@@ -61,10 +61,15 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
       body = null;
     }
     // Nunca se muestran códigos ni trazas al usuario (RF-GEN-03).
+    const code = body?.error.code ?? 'INTERNAL_ERROR';
+    const message =
+      response.status >= 500 || code === 'INTERNAL_ERROR'
+        ? GENERIC_ERROR
+        : (body?.error.message ?? GENERIC_ERROR);
     throw new ApiError(
       response.status,
-      body?.error.code ?? 'INTERNAL_ERROR',
-      body?.error.message ?? GENERIC_ERROR,
+      code,
+      message,
       body?.error.fields ?? {},
     );
   } catch (error) {
