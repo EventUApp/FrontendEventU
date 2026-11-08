@@ -735,5 +735,36 @@ describe('postReservation (HU_EU_03_09, ADR-09, SAD §7.1)', () => {
     g.fetch = jest.fn().mockRejectedValue(new TypeError('Network request failed'));
     await expect(postReservation(sampleReq)).rejects.toBeInstanceOf(NetworkError);
   });
+
+  it.each(['ahorro', 'equilibrado', 'premium', 'personalizado'] as const)(
+    'transmite fielmente la modalidad %s como origen de la reserva (RN-21, criterio 4)',
+    async (modality) => {
+      g.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        json: async () => ({ ...sampleReservation, modality }),
+      });
+
+      await postReservation({ ...sampleReq, modality });
+
+      const [, init] = g.fetch.mock.calls[0];
+      expect(JSON.parse(init.body).modality).toBe(modality);
+    },
+  );
+
+  it('verifica que el número de reserva cumple el formato propuesto EU- + 6 alfanuméricos (RN-18, criterio 5)', async () => {
+    const validCodes = ['EU-ABC123', 'EU-X9Y8Z7', 'EU-000000', 'EU-ZZZZZZ'];
+    for (const code of validCodes) {
+      g.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        json: async () => ({ ...sampleReservation, code }),
+      });
+
+      const res = await postReservation(sampleReq);
+      expect(res.code).toMatch(/^EU-[A-Za-z0-9]{6}$/);
+    }
+  });
 });
+
 

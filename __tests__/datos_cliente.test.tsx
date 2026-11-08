@@ -341,6 +341,57 @@ describe('DatosClienteScreen (HU_EU_03_09, T_HU_EU_03_09_3)', () => {
       const dateValue = find(root, 'input-event-date').props.value;
       expect(/^\d{4}-\d{2}-\d{2}$/.test(dateValue)).toBe(true);
     });
+
+    it.each(['', '   ', '\t', '\n'])(
+      'valida nombre obligatorio ante entrada vacía o en blanco (%j) (criterio 3.1)',
+      async (emptyName) => {
+        const root = await mountScreen({ cart: COMPLETE_CART });
+
+        await act(async () => {
+          find(root, 'input-name').props.onChangeText(emptyName);
+          find(root, 'input-email').props.onChangeText('cliente@ejemplo.com');
+          find(root, 'input-phone').props.onChangeText('3001234567');
+          find(root, 'input-event-date').props.onChangeText(futureDate());
+          press(find(root, 'btn-continue-payment'));
+        });
+
+        const allTexts = findAllText(root);
+        expect(allTexts).toContain(NAME_REQUIRED_MESSAGE);
+      },
+    );
+
+    it('valida fecha de hoy exacto como no posterior a hoy (RN-20, criterio 3.4)', async () => {
+      const root = await mountScreen({ cart: COMPLETE_CART });
+      const now = new Date();
+      const todayISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+      await act(async () => {
+        find(root, 'input-name').props.onChangeText('Carlos');
+        find(root, 'input-email').props.onChangeText('carlos@ejemplo.com');
+        find(root, 'input-phone').props.onChangeText('3001234567');
+        find(root, 'input-event-date').props.onChangeText(todayISO);
+        press(find(root, 'btn-continue-payment'));
+      });
+
+      const allTexts = findAllText(root);
+      expect(allTexts).toContain('Seleccione una fecha posterior a hoy.');
+    });
+
+    it('limpia el error de validación del campo en cuanto el usuario escribe de nuevo', async () => {
+      const root = await mountScreen({ cart: COMPLETE_CART });
+
+      // 1. Envío inicial vacío genera errores
+      await act(async () => {
+        press(find(root, 'btn-continue-payment'));
+      });
+      expect(findAllText(root)).toContain(NAME_REQUIRED_MESSAGE);
+
+      // 2. Corregir nombre limpia el error de nombre inmediatamente
+      await act(async () => {
+        find(root, 'input-name').props.onChangeText('Beatriz');
+      });
+      expect(findAllText(root)).not.toContain(NAME_REQUIRED_MESSAGE);
+    });
   });
 
   describe('4. Creación de reserva exitosa (Criterio 5)', () => {
@@ -402,6 +453,160 @@ describe('DatosClienteScreen (HU_EU_03_09, T_HU_EU_03_09_3)', () => {
       expect(req.event_date).toBe(fDate);
 
       expect(mockNavigate).toHaveBeenCalledWith('Pago');
+    });
+
+    it('crea reserva sin presupuesto cuando budgetCop es null (RN-22): omite budget_cop en la petición', async () => {
+      const mockReservation: Reservation = {
+        code: 'EU-NOBUD1',
+        status: 'creada',
+        total_cop: 4_300_000,
+        items: [],
+        customer: {
+          name: 'Daniel',
+          email: 'daniel@ejemplo.com',
+          phone: '3151234567',
+        },
+        event_date: futureDate(),
+      };
+
+      const spyPost = jest
+        .spyOn(endpoints, 'postReservation')
+        .mockResolvedValueOnce(mockReservation);
+
+      const nav = { navigate: mockNavigate };
+      const root = await mountScreen(
+        {
+          cart: COMPLETE_CART,
+          guests: 40,
+          eventType: 'xv',
+          budgetCop: null, // Sin presupuesto (RN-22)
+          cartOrigin: 'personalizado',
+        },
+        nav,
+      );
+
+      await act(async () => {
+        find(root, 'input-name').props.onChangeText('Daniel');
+        find(root, 'input-email').props.onChangeText('daniel@ejemplo.com');
+        find(root, 'input-phone').props.onChangeText('3151234567');
+        find(root, 'input-event-date').props.onChangeText(futureDate());
+      });
+
+      await act(async () => {
+        press(find(root, 'btn-continue-payment'));
+      });
+
+      expect(spyPost).toHaveBeenCalledTimes(1);
+      const req = spyPost.mock.calls[0][0];
+      expect(req.budget_cop).toBeUndefined();
+      expect(req.expected_total_cop).toBe(4_300_000);
+      expect(mockNavigate).toHaveBeenCalledWith('Pago');
+    });
+
+    it.each(['ahorro', 'equilibrado', 'premium'] as const)(
+      'transmite la modalidad de paquete original %s como origen de la reserva (RN-21, criterio 4)',
+      async (modality) => {
+        const mockReservation: Reservation = {
+          code: `EU-${modality.slice(0, 4).toUpperCase()}1`,
+          status: 'creada',
+          total_cop: 4_300_000,
+          items: [],
+          customer: { name: 'Cliente', email: 'c@e.co', phone: '3001234567' },
+          event_date: futureDate(),
+        };
+
+        const spyPost = jest
+          .spyOn(endpoints, 'postReservation')
+          .mockResolvedValueOnce(mockReservation);
+
+        const root = await mountScreen({
+          cart: COMPLETE_CART,
+          guests: 50,
+          eventType: 'boda',
+          budgetCop: 10_000_000,
+          cartOrigin: modality,
+        });
+
+        await act(async () => {
+          find(root, 'input-name').props.onChangeText('Cliente');
+          find(root, 'input-email').props.onChangeText('c@e.co');
+          find(root, 'input-phone').props.onChangeText('3001234567');
+          find(root, 'input-event-date').props.onChangeText(futureDate());
+        });
+
+        await act(async () => {
+          press(find(root, 'btn-continue-payment'));
+        });
+
+        expect(spyPost).toHaveBeenCalledTimes(1);
+        expect(spyPost.mock.calls[0][0].modality).toBe(modality);
+      },
+    );
+
+    it('elimina espacios sobrantes (trim) de nombre, correo, teléfono y fecha antes de enviar (criterio 4)', async () => {
+      const fDate = futureDate();
+      const mockReservation: Reservation = {
+        code: 'EU-TRIM01',
+        status: 'creada',
+        total_cop: 4_300_000,
+        items: [],
+        customer: { name: 'Jorge', email: 'j@e.co', phone: '3001234567' },
+        event_date: fDate,
+      };
+
+      const spyPost = jest
+        .spyOn(endpoints, 'postReservation')
+        .mockResolvedValueOnce(mockReservation);
+
+      const root = await mountScreen({ cart: COMPLETE_CART, guests: 30 });
+
+      await act(async () => {
+        find(root, 'input-name').props.onChangeText('   Jorge Andrés   ');
+        find(root, 'input-email').props.onChangeText('   jorge@dominio.co   ');
+        find(root, 'input-phone').props.onChangeText('   3001234567   ');
+        find(root, 'input-event-date').props.onChangeText(`   ${fDate}   `);
+      });
+
+      await act(async () => {
+        press(find(root, 'btn-continue-payment'));
+      });
+
+      expect(spyPost).toHaveBeenCalledTimes(1);
+      const req = spyPost.mock.calls[0][0];
+      expect(req.customer.name).toBe('Jorge Andrés');
+      expect(req.customer.email).toBe('jorge@dominio.co');
+      expect(req.customer.phone).toBe('3001234567');
+      expect(req.event_date).toBe(fDate);
+    });
+
+    it('verifica que el código generado cumple el formato EU- + 6 alfanuméricos (RN-18, criterio 5)', async () => {
+      const mockReservation: Reservation = {
+        code: 'EU-8K9M2P',
+        status: 'creada',
+        total_cop: 4_300_000,
+        items: [],
+        customer: { name: 'Lucía', email: 'lucia@test.com', phone: '3201234567' },
+        event_date: futureDate(),
+      };
+
+      jest.spyOn(endpoints, 'postReservation').mockResolvedValueOnce(mockReservation);
+
+      const root = await mountScreen({ cart: COMPLETE_CART, guests: 40 });
+
+      await act(async () => {
+        find(root, 'input-name').props.onChangeText('Lucía');
+        find(root, 'input-email').props.onChangeText('lucia@test.com');
+        find(root, 'input-phone').props.onChangeText('3201234567');
+        find(root, 'input-event-date').props.onChangeText(futureDate());
+      });
+
+      await act(async () => {
+        press(find(root, 'btn-continue-payment'));
+      });
+
+      const st = snapshot(root);
+      expect(st.reservationCode).toBe('EU-8K9M2P');
+      expect(st.reservationCode).toMatch(/^EU-[A-Za-z0-9]{6}$/);
     });
   });
 
@@ -532,6 +737,136 @@ describe('DatosClienteScreen (HU_EU_03_09, T_HU_EU_03_09_3)', () => {
 
       const allTexts = findAllText(root);
       expect(allTexts).toContain('No fue posible completar la operación. Intente nuevamente.');
+    });
+
+    it('mapea errores de validación de campos devueltos por el servidor en 422 (criterio 6)', async () => {
+      jest.spyOn(endpoints, 'postReservation').mockRejectedValueOnce(
+        new ApiError(422, 'VALIDATION_ERROR', 'Revise los datos.', {
+          name: 'El nombre contiene caracteres inválidos.',
+          email: 'Dominio de correo no admitido.',
+        }),
+      );
+
+      const root = await mountScreen({ cart: COMPLETE_CART, guests: 40 });
+      await act(async () => {
+        find(root, 'input-name').props.onChangeText('Nombre Test');
+        find(root, 'input-email').props.onChangeText('test@invalido.com');
+        find(root, 'input-phone').props.onChangeText('3001234567');
+        find(root, 'input-event-date').props.onChangeText(futureDate());
+      });
+
+      await act(async () => {
+        press(find(root, 'btn-continue-payment'));
+      });
+
+      const allTexts = findAllText(root);
+      expect(allTexts).toContain('El nombre contiene caracteres inválidos.');
+      expect(allTexts).toContain('Dominio de correo no admitido.');
+    });
+
+    it('impide la creación en cliente si el carrito carece de alguno de los 3 rubros obligatorios (RN-03, RN-23)', async () => {
+      const spyPost = jest.spyOn(endpoints, 'postReservation');
+
+      // Carrito con espacio y alimentación pero sin decoración
+      const incompleteCart: CartService[] = [
+        makeService('esp-1', 'espacio', 2_000_000),
+        makeService('ali-1', 'alimentacion', 1_500_000),
+      ];
+
+      const root = await mountScreen({ cart: incompleteCart, guests: 40 });
+
+      await act(async () => {
+        find(root, 'input-name').props.onChangeText('María Pérez');
+        find(root, 'input-email').props.onChangeText('maria@ejemplo.com');
+        find(root, 'input-phone').props.onChangeText('3001234567');
+        find(root, 'input-event-date').props.onChangeText(futureDate());
+      });
+
+      await act(async () => {
+        press(find(root, 'btn-continue-payment'));
+      });
+
+      expect(spyPost).not.toHaveBeenCalled();
+      const allTexts = findAllText(root);
+      expect(allTexts).toContain(RESERVATION_CREATION_FAILED_MESSAGE);
+    });
+
+    it('impide la creación si el carrito de servicios está vacío', async () => {
+      const spyPost = jest.spyOn(endpoints, 'postReservation');
+      const root = await mountScreen({ cart: [], guests: 40 });
+
+      await act(async () => {
+        find(root, 'input-name').props.onChangeText('María Pérez');
+        find(root, 'input-email').props.onChangeText('maria@ejemplo.com');
+        find(root, 'input-phone').props.onChangeText('3001234567');
+        find(root, 'input-event-date').props.onChangeText(futureDate());
+      });
+
+      await act(async () => {
+        press(find(root, 'btn-continue-payment'));
+      });
+
+      expect(spyPost).not.toHaveBeenCalled();
+      const allTexts = findAllText(root);
+      expect(allTexts).toContain(RESERVATION_CREATION_FAILED_MESSAGE);
+    });
+  });
+
+  describe('6. Bloqueo de concurrencia y prevención de doble click (RNF-FIA-01)', () => {
+    it('deshabilita el botón durante la petición y evita llamadas concurrentes ante múltiples pulsaciones', async () => {
+      let resolvePost!: (val: Reservation) => void;
+      const pendingPromise = new Promise<Reservation>((resolve) => {
+        resolvePost = resolve;
+      });
+
+      const spyPost = jest
+        .spyOn(endpoints, 'postReservation')
+        .mockReturnValueOnce(pendingPromise);
+
+      const nav = { navigate: mockNavigate };
+      const root = await mountScreen({ cart: COMPLETE_CART, guests: 40 }, nav);
+
+      await act(async () => {
+        find(root, 'input-name').props.onChangeText('María Pérez');
+        find(root, 'input-email').props.onChangeText('maria@ejemplo.com');
+        find(root, 'input-phone').props.onChangeText('3001234567');
+        find(root, 'input-event-date').props.onChangeText(futureDate());
+      });
+
+      // 1. Primera pulsación inicia la llamada
+      await act(async () => {
+        press(find(root, 'btn-continue-payment'));
+      });
+      expect(spyPost).toHaveBeenCalledTimes(1);
+
+      // 2. Segunda pulsación mientras está pendiente no duplica la petición
+      await act(async () => {
+        press(find(root, 'btn-continue-payment'));
+      });
+      expect(spyPost).toHaveBeenCalledTimes(1);
+
+      // 3. Resolver la promesa
+      await act(async () => {
+        resolvePost({
+          code: 'EU-DBL001',
+          status: 'creada',
+          total_cop: 4_300_000,
+          items: [],
+          customer: { name: 'María', email: 'm@e.co', phone: '3001234567' },
+          event_date: futureDate(),
+        });
+      });
+
+      expect(mockNavigate).toHaveBeenCalledWith('Pago');
+    });
+
+    it('cumple con el área táctil mínima >= 44 pt en botón Continuar al pago y presets (RNF-USA-02)', async () => {
+      const root = await mountScreen({ cart: COMPLETE_CART });
+      const submitBtn = find(root, 'btn-continue-payment');
+      expect(submitBtn.props.accessibilityRole).toBe('button');
+
+      const presetChip = find(root, 'date-preset-1m');
+      expect(presetChip.props.accessibilityRole).toBe('button');
     });
   });
 });
