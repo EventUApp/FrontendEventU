@@ -164,6 +164,7 @@ export default function ResultadosScreen({
   // Estados para la vista de mapa (HU_EU_03_14)
   const [currentRegion, setCurrentRegion] = useState<MapRegion>(CALI_DEFAULT_REGION);
   const [selectedProvider, setSelectedProvider] = useState<ProviderSummary | null>(null);
+  const [popupImageFailed, setPopupImageFailed] = useState<boolean>(false);
   const [mapErrorBanner, setMapErrorBanner] = useState<string | null>(null);
 
   const baseQuery = useMemo<ProvidersQuery>(() => {
@@ -792,7 +793,10 @@ export default function ResultadosScreen({
                       latitude: provider.latitude!,
                       longitude: provider.longitude!,
                     }}
-                    onPress={() => setSelectedProvider(provider)}
+                    onPress={() => {
+                      setPopupImageFailed(false);
+                      setSelectedProvider(provider);
+                    }}
                   >
                     <View style={styles.markerBadge}>
                       <Text style={styles.markerBadgeText}>
@@ -838,11 +842,12 @@ export default function ResultadosScreen({
               </Pressable>
 
               <View style={styles.popupContentRow}>
-                {selectedProvider.cover_url ? (
+                {selectedProvider.cover_url && !popupImageFailed ? (
                   <Image
                     testID="map-popup-image"
                     source={{ uri: selectedProvider.cover_url }}
                     style={styles.popupImage}
+                    onError={() => setPopupImageFailed(true)}
                   />
                 ) : (
                   <View style={styles.popupPlaceholderImage}>
@@ -899,6 +904,22 @@ export default function ResultadosScreen({
           {networkError ? (
             <View style={styles.mapErrorOverlay}>
               <NetworkErrorView message={networkError} onRetry={handleRetry} />
+            </View>
+          ) : null}
+
+          {unexpectedError ? (
+            <View style={styles.mapErrorOverlay}>
+              <View style={styles.errorBanner} accessibilityRole="alert">
+                <Text style={styles.errorBannerText}>{unexpectedError}</Text>
+                <Pressable
+                  testID="btn-retry-providers-map"
+                  onPress={handleRetry}
+                  accessibilityRole="button"
+                  style={styles.primaryActionButton}
+                >
+                  <Text style={styles.primaryActionText}>Reintentar</Text>
+                </Pressable>
+              </View>
             </View>
           ) : null}
         </View>

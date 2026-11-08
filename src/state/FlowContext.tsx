@@ -72,8 +72,16 @@ export type Ctx = FlowContextValue;
 
 const FlowContext = createContext<FlowContextValue | null>(null);
 
-export function FlowProvider({ children }: { children: React.ReactNode }) {
-  const [flow, setFlow] = useState<FlowState>(initialFlow);
+export function FlowProvider({
+  children,
+  initial,
+}: {
+  children: React.ReactNode;
+  initial?: Partial<FlowState>;
+}) {
+  const [flow, setFlow] = useState<FlowState>(() =>
+    initial ? { ...initialFlow, ...initial } : initialFlow,
+  );
 
   const update = useCallback((patch: Partial<FlowState>) => {
     setFlow((f) => ({ ...f, ...patch }));
