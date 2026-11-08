@@ -1,7 +1,7 @@
 import React, { act } from 'react';
 import { Pressable, Text } from 'react-native';
 import { createRoot, type TestInstance } from 'test-renderer';
-import type { RecommendationResponse } from '../src/api/types';
+import type { CartService, RecommendationResponse } from '../src/api/types';
 import * as endpoints from '../src/api/endpoints';
 import { LoadingNotice } from '../src/components/LoadingNotice';
 import { NetworkErrorView } from '../src/components/NetworkErrorView';
@@ -592,5 +592,218 @@ describe('FlowContext — acciones de estado de Mi evento (T_HU_EU_02_13_1)', ()
     });
 
     expect(textOf(findByTestId(root.container, 'ineligible-count'))).toBe('2');
+  });
+});
+
+describe('HU_EU_02_13 — T_HU_EU_02_13_3: Conservación del carrito y estado de «Mi evento» al navegar entre pantallas (criterio 4, RN-21, HU_EU_01_04)', () => {
+  const serviceSpace: CartService = {
+    service_id: 'svc-esp-conservar',
+    name: 'Hacienda El Paraíso',
+    category: 'espacio',
+    provider_id: 'prv-1',
+    provider_name: 'Haciendas Cali',
+    price_model: 'fijo',
+    unit_price_cop: 2_500_000,
+    min_guests: 30,
+    max_guests: 200,
+  };
+
+  const serviceFood: CartService = {
+    service_id: 'svc-ali-conservar',
+    name: 'Banquete Campestre',
+    category: 'alimentacion',
+    provider_id: 'prv-2',
+    provider_name: 'Catering Cali',
+    price_model: 'por_invitado',
+    unit_price_cop: 25_000,
+    min_guests: 20,
+    max_guests: 180,
+  };
+
+  const serviceDeco: CartService = {
+    service_id: 'svc-dec-conservar',
+    name: 'Decoración Rústica',
+    category: 'decoracion',
+    provider_id: 'prv-3',
+    provider_name: 'Eventos Flores',
+    price_model: 'fijo',
+    unit_price_cop: 800_000,
+    min_guests: 10,
+    max_guests: 300,
+  };
+
+  function MultiScreenNavigationHarness() {
+    const { flow, update, addToCart } = useFlow();
+    const [currentRoute, setCurrentRoute] = React.useState<'Ficha' | 'MiEvento' | 'Catalogo'>('Ficha');
+
+    return (
+      <>
+        {/* Navegación entre pantallas */}
+        <Pressable testID="go-to-ficha" onPress={() => setCurrentRoute('Ficha')} />
+        <Pressable testID="go-to-mievento" onPress={() => setCurrentRoute('MiEvento')} />
+        <Pressable testID="go-to-catalogo" onPress={() => setCurrentRoute('Catalogo')} />
+
+        {/* Acciones en pantalla Ficha */}
+        <Pressable
+          testID="btn-init-event"
+          onPress={() =>
+            update({
+              eventType: 'boda',
+              guests: 80,
+              budgetCop: 8_000_000,
+              eventDate: '2027-09-20',
+            })
+          }
+        />
+        <Pressable testID="btn-add-space" onPress={() => addToCart(serviceSpace)} />
+        <Pressable testID="btn-add-food" onPress={() => addToCart(serviceFood)} />
+        <Pressable testID="btn-add-deco" onPress={() => addToCart(serviceDeco)} />
+
+        {/* Acciones dentro de MiEvento */}
+        <Pressable
+          testID="btn-edit-mievento-data"
+          onPress={() =>
+            update({
+              guests: 120,
+              eventDate: '2027-10-15',
+              budgetCop: 10_000_000,
+            })
+          }
+        />
+
+        {/* Cargar paquete recomendado (RN-21) */}
+        <Pressable
+          testID="btn-load-package-equilibrado"
+          onPress={() =>
+            update({
+              chosenModality: 'equilibrado',
+              cartOrigin: 'equilibrado',
+              cart: [serviceSpace, serviceFood, serviceDeco],
+            })
+          }
+        />
+
+        {/* Estado visible para aserciones */}
+        <Text testID="current-route">{currentRoute}</Text>
+        <Text testID="flow-state-json">{JSON.stringify(flow)}</Text>
+      </>
+    );
+  }
+
+  it('el contenido de Mi evento (servicios, invitados, presupuesto, fecha) se conserva al navegar entre pantallas y volver atrás (criterio 4)', () => {
+    const root = createRoot();
+    act(() => {
+      root.render(
+        <FlowProvider>
+          <MultiScreenNavigationHarness />
+        </FlowProvider>,
+      );
+    });
+
+    // 1. En pantalla Ficha: inicializar evento y agregar 3 servicios
+    act(() => {
+      press(findByTestId(root.container, 'btn-init-event'));
+    });
+    act(() => {
+      press(findByTestId(root.container, 'btn-add-space'));
+    });
+    act(() => {
+      press(findByTestId(root.container, 'btn-add-food'));
+    });
+    act(() => {
+      press(findByTestId(root.container, 'btn-add-deco'));
+    });
+
+    // 2. Navegar a pantalla MiEvento
+    act(() => {
+      press(findByTestId(root.container, 'go-to-mievento'));
+    });
+    expect(textOf(findByTestId(root.container, 'current-route'))).toBe('MiEvento');
+
+    let state = JSON.parse(textOf(findByTestId(root.container, 'flow-state-json'))) as FlowState;
+    expect(state.cart).toHaveLength(3);
+    expect(state.guests).toBe(80);
+    expect(state.budgetCop).toBe(8_000_000);
+    expect(state.eventType).toBe('boda');
+    expect(state.eventDate).toBe('2027-09-20');
+
+    // 3. Modificar datos del evento dentro de MiEvento (invitados = 120, fecha = 2027-10-15, presupuesto = 10.000.000)
+    act(() => {
+      press(findByTestId(root.container, 'btn-edit-mievento-data'));
+    });
+
+    // 4. Navegar a otra pantalla (Catálogo)
+    act(() => {
+      press(findByTestId(root.container, 'go-to-catalogo'));
+    });
+    expect(textOf(findByTestId(root.container, 'current-route'))).toBe('Catalogo');
+
+    // 5. Volver atrás a Ficha y luego a MiEvento
+    act(() => {
+      press(findByTestId(root.container, 'go-to-ficha'));
+    });
+    expect(textOf(findByTestId(root.container, 'current-route'))).toBe('Ficha');
+
+    act(() => {
+      press(findByTestId(root.container, 'go-to-mievento'));
+    });
+    expect(textOf(findByTestId(root.container, 'current-route'))).toBe('MiEvento');
+
+    // Verificar que los 3 servicios y todos los cambios persisten completamente
+    state = JSON.parse(textOf(findByTestId(root.container, 'flow-state-json'))) as FlowState;
+    expect(state.cart.map((s) => s.service_id)).toEqual([
+      'svc-esp-conservar',
+      'svc-ali-conservar',
+      'svc-dec-conservar',
+    ]);
+    expect(state.guests).toBe(120);
+    expect(state.eventDate).toBe('2027-10-15');
+    expect(state.budgetCop).toBe(10_000_000);
+    expect(state.eventType).toBe('boda');
+  });
+
+  it('al elegir un paquete sus servicios se cargan con su modalidad de origen y se preserva al navegar (RN-21, criterios 4 y 5)', () => {
+    const root = createRoot();
+    act(() => {
+      root.render(
+        <FlowProvider>
+          <MultiScreenNavigationHarness />
+        </FlowProvider>,
+      );
+    });
+
+    // Cargar paquete con modalidad equilibrado
+    act(() => {
+      press(findByTestId(root.container, 'btn-load-package-equilibrado'));
+    });
+
+    let state = JSON.parse(textOf(findByTestId(root.container, 'flow-state-json'))) as FlowState;
+    expect(state.cartOrigin).toBe('equilibrado');
+    expect(state.chosenModality).toBe('equilibrado');
+    expect(state.cart).toHaveLength(3);
+
+    // Navegar a MiEvento y verificar que cartOrigin se conserva
+    act(() => {
+      press(findByTestId(root.container, 'go-to-mievento'));
+    });
+
+    state = JSON.parse(textOf(findByTestId(root.container, 'flow-state-json'))) as FlowState;
+    expect(state.cartOrigin).toBe('equilibrado');
+
+    // Si luego se agrega un servicio nuevo desde Ficha, cartOrigin pasa a personalizado
+    act(() => {
+      press(findByTestId(root.container, 'go-to-ficha'));
+    });
+    act(() => {
+      press(findByTestId(root.container, 'btn-add-deco'));
+    });
+
+    // Volver a MiEvento: cartOrigin y el nuevo servicio persisten
+    act(() => {
+      press(findByTestId(root.container, 'go-to-mievento'));
+    });
+    state = JSON.parse(textOf(findByTestId(root.container, 'flow-state-json'))) as FlowState;
+    expect(state.cartOrigin).toBe('personalizado');
+    expect(state.cart).toHaveLength(3);
   });
 });
