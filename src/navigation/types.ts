@@ -7,7 +7,7 @@ export type TabParamList = {
 };
 
 export type RootStackParamList = {
-  Tabs: undefined;
+  Tabs: { screen?: keyof TabParamList; params?: TabParamList[keyof TabParamList] } | undefined;
   Presupuesto: undefined; // atajo por presupuesto (HU_EU_01_01)
   Paquetes: undefined;
   Comparar: undefined;
