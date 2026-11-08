@@ -1,6 +1,6 @@
 import { ApiError, apiFetch, GENERIC_ERROR, NetworkError } from '../src/api/client';
-import { getHome, getProviders, postRecommendations } from '../src/api/endpoints';
-import type { HomeResponse, ProvidersResponse } from '../src/api/types';
+import { getCatalog, getHome, getProviders, postQuote, postRecommendations } from '../src/api/endpoints';
+import type { CatalogItem, HomeResponse, ProvidersResponse, Quote } from '../src/api/types';
 import { REQUEST_TIMEOUT_MS, SLOW_NOTICE_MS } from '../src/config/limits';
 
 jest.mock('../src/config/env', () => ({ API_BASE_URL: 'https://api.ejemplo.test' }));
@@ -293,5 +293,135 @@ describe('getProviders (HU_EU_02_05 — T_HU_EU_02_05_4)', () => {
       status: 500,
       message: GENERIC_ERROR,
     });
+  });
+});
+
+describe('postQuote y getCatalog (HU_EU_02_06 — T_HU_EU_02_06_3)', () => {
+  afterEach(() => jest.resetAllMocks());
+
+  it('envía POST /api/v1/quotes con budget_cop, event_type, guests y service_ids (sin precios, ADR-09) y devuelve total y restante', async () => {
+    const mockQuote: Quote = {
+      total_cop: 3_600_000,
+      remaining_cop: 400_000,
+      breakdown: [
+        {
+          category: 'espacio',
+          subtotal_cop: 800_000,
+          items: [
+            {
+              service_id: 'esp-ok',
+              name: 'Salón',
+              provider_id: 'prv-1',
+              provider_name: 'Proveedor 1',
+              verification_status: 'verificado',
+              cost_cop: 800_000,
+            },
+          ],
+        },
+      ],
+      missing_categories: [],
+      ineligible: [],
+    };
+    g.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => mockQuote });
+
+    const res = await postQuote({
+      budget_cop: 4_000_000,
+      event_type: 'boda',
+      guests: 100,
+      service_ids: ['esp-ok', 'ali', 'dec', 'ent'],
+    });
+
+    expect(res).toEqual(mockQuote);
+    expect(g.fetch).toHaveBeenCalledWith(
+      'https://api.ejemplo.test/api/v1/quotes',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          budget_cop: 4_000_000,
+          event_type: 'boda',
+          guests: 100,
+          service_ids: ['esp-ok', 'ali', 'dec', 'ent'],
+        }),
+      }),
+    );
+  });
+
+  it('envía POST /api/v1/quotes sin budget_cop cuando el presupuesto está ausente y recibe remaining_cop null (RN-22)', async () => {
+    const mockQuote: Quote = {
+      total_cop: 11_800_000,
+      remaining_cop: null,
+      breakdown: [],
+      missing_categories: [],
+      ineligible: [],
+    };
+    g.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => mockQuote });
+
+    const res = await postQuote({
+      event_type: 'boda',
+      guests: 100,
+      service_ids: ['esp2', 'ali', 'dec'],
+    });
+
+    expect(res.remaining_cop).toBeNull();
+    expect(res.total_cop).toBe(11_800_000);
+    const bodySent = JSON.parse(g.fetch.mock.calls[0][1].body as string) as Record<string, unknown>;
+    expect(bodySent).not.toHaveProperty('budget_cop');
+    expect(bodySent).toEqual({
+      event_type: 'boda',
+      guests: 100,
+      service_ids: ['esp2', 'ali', 'dec'],
+    });
+  });
+
+  it('propaga ApiError 409 BUDGET_EXCEEDED cuando la cotización supera el presupuesto (criterios 4 y 6)', async () => {
+    g.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        error: {
+          code: 'BUDGET_EXCEEDED',
+          message: 'Ese cambio supera su presupuesto. Elija otra opción.',
+        },
+      }),
+    });
+
+    await expect(
+      postQuote({
+        budget_cop: 3_000_000,
+        event_type: 'boda',
+        guests: 100,
+        service_ids: ['esp-caro', 'ali', 'dec'],
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: 'BUDGET_EXCEEDED',
+    });
+  });
+
+  it('consulta GET /api/v1/catalog con category, event_type y guests para obtener alternativas elegibles (criterios 2.2 y 3.1)', async () => {
+    const items: CatalogItem[] = [
+      {
+        id: 'esp-ok',
+        name: 'Salón Jardín',
+        category: 'espacio',
+        provider_id: 'prv-1',
+        provider_name: 'Proveedor 1',
+        price_cop: 800_000,
+        price_model: 'fijo',
+        level: 'equilibrado',
+        min_guests: 20,
+        max_guests: 200,
+      },
+    ];
+    g.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ items }) });
+
+    const res = await getCatalog({ category: 'espacio', event_type: 'boda', guests: 100 });
+
+    expect(res.items).toEqual(items);
+    const calledUrl = g.fetch.mock.calls[0][0] as string;
+    expect(calledUrl).toContain('https://api.ejemplo.test/api/v1/catalog?');
+    expect(calledUrl).toContain('category=espacio');
+    expect(calledUrl).toContain('event_type=boda');
+    expect(calledUrl).toContain('guests=100');
   });
 });
