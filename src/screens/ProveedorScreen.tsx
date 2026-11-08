@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { ApiError, GENERIC_ERROR, NetworkError } from '../api/client';
 import { getProvider } from '../api/endpoints';
-import type { CatalogItem, Category, Provider } from '../api/types';
+import type { CartService, CatalogItem, Category, Provider } from '../api/types';
 import { LoadingNotice } from '../components/LoadingNotice';
 import { MinimalIcon } from '../components/MinimalIcon';
 import { NetworkErrorView } from '../components/NetworkErrorView';
@@ -11,7 +11,13 @@ import { GUESTS_MAX, GUESTS_MIN } from '../config/limits';
 import type { RootStackParamList } from '../navigation/types';
 import { useFlow } from '../state/FlowContext';
 import { colors, font, MIN_TOUCH, spacing } from '../theme';
-import { addToCart, catalogItemToCartService, fitsGuests } from '../utils/cart';
+import {
+  CANCEL_REPLACE_TEXT,
+  catalogItemToCartService,
+  CONFIRM_REPLACE_TEXT,
+  fitsGuests,
+  REPLACE_CATEGORY_CONFIRMATION_MESSAGE,
+} from '../utils/cart';
 import { formatCOP } from '../utils/money';
 
 const CATEGORY_LABELS: Record<Category, string> = {
@@ -41,15 +47,23 @@ export interface ProveedorScreenProps {
       providerId?: string;
     };
   };
+  /**
+   * Cuando es true, solicita confirmación previa al sustituir un servicio del mismo rubro (criterio 3.1).
+   * Por defecto false para conservar el reemplazo directo documentado en el recorte del analista.
+   */
+  requireReplaceConfirm?: boolean;
 }
 
 /**
  * HU_EU_02_08: Pantalla «Ficha del proveedor» con estado y aviso de verificación,
  * datos de contacto, ubicación, servicios con capacidad y botón «Agregar a mi evento».
  */
-export default function ProveedorScreen({ route }: ProveedorScreenProps = {}) {
+export default function ProveedorScreen({
+  route,
+  requireReplaceConfirm = false,
+}: ProveedorScreenProps = {}) {
   const routeHook = useRouteSafe();
-  const { flow, update } = useFlow();
+  const { flow, update, addToCart: flowAddToCart } = useFlow();
 
   const providerId = route?.params?.providerId ?? routeHook?.params?.providerId ?? '';
 
@@ -59,6 +73,7 @@ export default function ProveedorScreen({ route }: ProveedorScreenProps = {}) {
   const [networkError, setNetworkError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [unexpectedError, setUnexpectedError] = useState<string | null>(null);
+  const [pendingReplaceItem, setPendingReplaceItem] = useState<CartService | null>(null);
 
   const autoFetchedRef = useRef(false);
 
@@ -108,13 +123,44 @@ export default function ProveedorScreen({ route }: ProveedorScreenProps = {}) {
 
   const handleAddService = (svc: CatalogItem) => {
     if (!provider) return;
+    const minGuests = svc.min_guests ?? GUESTS_MIN;
+    const maxGuests = svc.max_guests ?? GUESTS_MAX;
+    if (flow.guests !== null && !fitsGuests({ min_guests: minGuests, max_guests: maxGuests }, flow.guests)) {
+      return;
+    }
     const cartItem = catalogItemToCartService({
       ...svc,
       provider_id: provider.id,
       provider_name: provider.name,
     });
-    const result = addToCart(flow.cart, cartItem);
-    update({ cart: result.cart, cartOrigin: 'personalizado' });
+    const existingSameCat = flow.cart.find((c) => c.category === svc.category);
+    if (requireReplaceConfirm && existingSameCat && existingSameCat.service_id !== svc.id) {
+      setPendingReplaceItem(cartItem);
+      return;
+    }
+    if (flowAddToCart) {
+      flowAddToCart(cartItem);
+    } else {
+      update({ cart: [...flow.cart.filter((c) => c.category !== cartItem.category), cartItem], cartOrigin: 'personalizado' });
+    }
+  };
+
+  const handleConfirmReplace = () => {
+    if (pendingReplaceItem) {
+      if (flowAddToCart) {
+        flowAddToCart(pendingReplaceItem);
+      } else {
+        update({
+          cart: [...flow.cart.filter((c) => c.category !== pendingReplaceItem.category), pendingReplaceItem],
+          cartOrigin: 'personalizado',
+        });
+      }
+      setPendingReplaceItem(null);
+    }
+  };
+
+  const handleCancelReplace = () => {
+    setPendingReplaceItem(null);
   };
 
   return (
@@ -144,6 +190,36 @@ export default function ProveedorScreen({ route }: ProveedorScreenProps = {}) {
           <Text style={styles.notFoundText} testID="provider-not-found">
             {NOT_FOUND_MESSAGE}
           </Text>
+        </View>
+      ) : null}
+
+      {pendingReplaceItem ? (
+        <View
+          style={styles.replaceCard}
+          accessibilityRole="alert"
+          testID="replace-confirmation-dialog"
+        >
+          <Text style={styles.replacePromptText} testID="replace-confirmation-text">
+            {REPLACE_CATEGORY_CONFIRMATION_MESSAGE}
+          </Text>
+          <View style={styles.replaceActions}>
+            <Pressable
+              testID="btn-confirm-replace"
+              onPress={handleConfirmReplace}
+              accessibilityRole="button"
+              style={styles.confirmReplaceBtn}
+            >
+              <Text style={styles.confirmReplaceBtnText}>{CONFIRM_REPLACE_TEXT}</Text>
+            </Pressable>
+            <Pressable
+              testID="btn-cancel-replace"
+              onPress={handleCancelReplace}
+              accessibilityRole="button"
+              style={styles.cancelReplaceBtn}
+            >
+              <Text style={styles.cancelReplaceBtnText}>{CANCEL_REPLACE_TEXT}</Text>
+            </Pressable>
+          </View>
         </View>
       ) : null}
 
@@ -669,5 +745,50 @@ const styles = StyleSheet.create({
   notFoundText: {
     fontSize: font.base,
     color: colors.muted,
+  },
+  replaceCard: {
+    padding: spacing.md,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    backgroundColor: '#F3F0FF',
+    gap: spacing.sm,
+  },
+  replacePromptText: {
+    fontSize: font.base,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  replaceActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  confirmReplaceBtn: {
+    flex: 1,
+    minHeight: MIN_TOUCH,
+    backgroundColor: colors.primary,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  confirmReplaceBtnText: {
+    color: '#FFFFFF',
+    fontSize: font.base,
+    fontWeight: '700',
+  },
+  cancelReplaceBtn: {
+    flex: 1,
+    minHeight: MIN_TOUCH,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelReplaceBtnText: {
+    color: colors.text,
+    fontSize: font.base,
+    fontWeight: '600',
   },
 });

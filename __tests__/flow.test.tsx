@@ -380,3 +380,217 @@ describe('Escenarios de red simulados y navegación real entre pantallas (T_HU_E
     });
   });
 });
+
+describe('FlowContext — acciones de estado de Mi evento (T_HU_EU_02_13_1)', () => {
+  const serviceSpace1 = {
+    service_id: 'svc-esp-1',
+    name: 'Salón Esmeralda',
+    category: 'espacio' as const,
+    provider_id: 'prv-1',
+    provider_name: 'Hacienda 1',
+    price_model: 'fijo' as const,
+    unit_price_cop: 2_500_000,
+    min_guests: 30,
+    max_guests: 150,
+  };
+
+  const serviceSpace2 = {
+    service_id: 'svc-esp-2',
+    name: 'Salón Diamante',
+    category: 'espacio' as const,
+    provider_id: 'prv-2',
+    provider_name: 'Hacienda 2',
+    price_model: 'fijo' as const,
+    unit_price_cop: 3_500_000,
+    min_guests: 50,
+    max_guests: 200,
+  };
+
+  const serviceFood = {
+    service_id: 'svc-food-1',
+    name: 'Banquete Premium',
+    category: 'alimentacion' as const,
+    provider_id: 'prv-3',
+    provider_name: 'Chef 1',
+    price_model: 'fijo' as const,
+    unit_price_cop: 4_000_000,
+    min_guests: 20,
+    max_guests: 180,
+  };
+
+  function CartActionsSimulator() {
+    const { flow, addToCart, removeFromCart, clearCart, revalidateCartForGuests } = useFlow();
+    const [ineligibleCount, setIneligibleCount] = React.useState<number | null>(null);
+
+    return (
+      <>
+        <Pressable
+          testID="btn-add-space-1"
+          onPress={() => {
+            addToCart(serviceSpace1);
+          }}
+        />
+        <Pressable
+          testID="btn-add-space-2"
+          onPress={() => {
+            addToCart(serviceSpace2);
+          }}
+        />
+        <Pressable
+          testID="btn-add-food"
+          onPress={() => {
+            addToCart(serviceFood);
+          }}
+        />
+        <Pressable
+          testID="btn-remove-space"
+          onPress={() => {
+            removeFromCart('svc-esp-1');
+          }}
+        />
+        <Pressable
+          testID="btn-clear-cart"
+          onPress={() => {
+            clearCart();
+          }}
+        />
+        <Pressable
+          testID="btn-revalidate-guests-200"
+          onPress={() => {
+            const list = revalidateCartForGuests(200);
+            setIneligibleCount(list.length);
+          }}
+        />
+        <Text testID="cart-count">{flow.cart.length}</Text>
+        <Text testID="cart-origin">{flow.cartOrigin}</Text>
+        <Text testID="cart-ids">{flow.cart.map((s) => s.service_id).join(',')}</Text>
+        <Text testID="ineligible-count">{ineligibleCount !== null ? String(ineligibleCount) : 'none'}</Text>
+      </>
+    );
+  }
+
+  it('addToCart agrega servicio a Mi evento, actualiza el conteo y fija cartOrigin en personalizado', () => {
+    const root = createRoot();
+    act(() => {
+      root.render(
+        <FlowProvider>
+          <CartActionsSimulator />
+        </FlowProvider>,
+      );
+    });
+
+    expect(textOf(findByTestId(root.container, 'cart-count'))).toBe('0');
+    expect(textOf(findByTestId(root.container, 'cart-origin'))).toBe('personalizado');
+
+    act(() => {
+      press(findByTestId(root.container, 'btn-add-space-1'));
+    });
+
+    expect(textOf(findByTestId(root.container, 'cart-count'))).toBe('1');
+    expect(textOf(findByTestId(root.container, 'cart-ids'))).toBe('svc-esp-1');
+    expect(textOf(findByTestId(root.container, 'cart-origin'))).toBe('personalizado');
+  });
+
+  it('addToCart reemplaza servicio del mismo rubro conservando los demás (RN-23)', () => {
+    const root = createRoot();
+    act(() => {
+      root.render(
+        <FlowProvider>
+          <CartActionsSimulator />
+        </FlowProvider>,
+      );
+    });
+
+    act(() => {
+      press(findByTestId(root.container, 'btn-add-space-1'));
+    });
+    act(() => {
+      press(findByTestId(root.container, 'btn-add-food'));
+    });
+
+    expect(textOf(findByTestId(root.container, 'cart-count'))).toBe('2');
+    expect(textOf(findByTestId(root.container, 'cart-ids'))).toBe('svc-esp-1,svc-food-1');
+
+    // Agregar Salón 2 (mismo rubro espacio): debe sustituir a Salón 1
+    act(() => {
+      press(findByTestId(root.container, 'btn-add-space-2'));
+    });
+
+    expect(textOf(findByTestId(root.container, 'cart-count'))).toBe('2');
+    expect(textOf(findByTestId(root.container, 'cart-ids'))).toBe('svc-food-1,svc-esp-2');
+  });
+
+  it('removeFromCart elimina el servicio del carrito y actualiza la lista', () => {
+    const root = createRoot();
+    act(() => {
+      root.render(
+        <FlowProvider>
+          <CartActionsSimulator />
+        </FlowProvider>,
+      );
+    });
+
+    act(() => {
+      press(findByTestId(root.container, 'btn-add-space-1'));
+    });
+    act(() => {
+      press(findByTestId(root.container, 'btn-add-food'));
+    });
+
+    expect(textOf(findByTestId(root.container, 'cart-count'))).toBe('2');
+
+    act(() => {
+      press(findByTestId(root.container, 'btn-remove-space'));
+    });
+
+    expect(textOf(findByTestId(root.container, 'cart-count'))).toBe('1');
+    expect(textOf(findByTestId(root.container, 'cart-ids'))).toBe('svc-food-1');
+  });
+
+  it('clearCart vacía los servicios del carrito', () => {
+    const root = createRoot();
+    act(() => {
+      root.render(
+        <FlowProvider>
+          <CartActionsSimulator />
+        </FlowProvider>,
+      );
+    });
+
+    act(() => {
+      press(findByTestId(root.container, 'btn-add-space-1'));
+    });
+    expect(textOf(findByTestId(root.container, 'cart-count'))).toBe('1');
+
+    act(() => {
+      press(findByTestId(root.container, 'btn-clear-cart'));
+    });
+    expect(textOf(findByTestId(root.container, 'cart-count'))).toBe('0');
+  });
+
+  it('revalidateCartForGuests detecta servicios que dejan de cubrir los invitados indicados', () => {
+    const root = createRoot();
+    act(() => {
+      root.render(
+        <FlowProvider>
+          <CartActionsSimulator />
+        </FlowProvider>,
+      );
+    });
+
+    // Agregamos espacio 1 (max 150) y comida (max 180)
+    act(() => {
+      press(findByTestId(root.container, 'btn-add-space-1'));
+    });
+    act(() => {
+      press(findByTestId(root.container, 'btn-add-food'));
+    });
+
+    // Revalidamos para 200 invitados: ambos superan su capacidad máxima (150 y 180) -> 2 inelegibles
+    act(() => {
+      press(findByTestId(root.container, 'btn-revalidate-guests-200'));
+    });
+
+    expect(textOf(findByTestId(root.container, 'ineligible-count'))).toBe('2');
+  });
+});
