@@ -46,9 +46,15 @@ export default function ConfirmacionScreen() {
           },
         });
         if (active) {
-          setReservation(data);
-          setErrorMessage(null);
-          setNetworkError(null);
+          // Criterio 4: la confirmación solo se muestra para reservas pagadas
+          if (data.status !== 'pagada') {
+            setErrorMessage(RESERVATION_NOT_FOUND_MESSAGE);
+            setReservation(null);
+          } else {
+            setReservation(data);
+            setErrorMessage(null);
+            setNetworkError(null);
+          }
         }
       } catch (err) {
         if (!active) return;
