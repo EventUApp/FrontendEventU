@@ -1,12 +1,23 @@
 import { useRoute, type RouteProp } from '@react-navigation/native';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  Image,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { ApiError, GENERIC_ERROR, NetworkError } from '../api/client';
 import { getProvider } from '../api/endpoints';
 import type { CartService, CatalogItem, Category, Provider } from '../api/types';
 import { LoadingNotice } from '../components/LoadingNotice';
 import { MinimalIcon } from '../components/MinimalIcon';
 import { NetworkErrorView } from '../components/NetworkErrorView';
+import { RatingStars } from '../components/RatingStars';
 import { GUESTS_MAX, GUESTS_MIN } from '../config/limits';
 import type { RootStackParamList } from '../navigation/types';
 import { useFlow } from '../state/FlowContext';
@@ -27,11 +38,13 @@ const CATEGORY_LABELS: Record<Category, string> = {
   entretenimiento: 'Entretenimiento',
 };
 
-/** Mensajes literales de HU_EU_02_08 (criterios 3.3, 5 y 6). */
+/** Mensajes literales de HU_EU_02_08 (criterios 3.3, 5 y 6) y HU_EU_02_16 (criterios 2.4, 3.1 y 6). */
 export const INELIGIBLE_GUESTS_MESSAGE = 'Este servicio no admite ese número de invitados.';
 export const VERIFICATION_WARNING_MESSAGE =
   'La verificación confirma los datos del proveedor, pero no garantiza el cumplimiento del servicio.';
 export const NOT_FOUND_MESSAGE = 'No encontramos este proveedor.';
+export const DEMO_REVIEWS_NOTICE = 'Reseñas de ejemplo para la demostración.';
+export const NO_REVIEWS_TEXT = 'Sin reseñas';
 
 function useRouteSafe(): RouteProp<RootStackParamList, 'Proveedor'> | null {
   try {
@@ -76,6 +89,33 @@ export default function ProveedorScreen({
   const [pendingReplaceItem, setPendingReplaceItem] = useState<CartService | null>(null);
 
   const autoFetchedRef = useRef(false);
+
+  const { width: windowWidth } = useWindowDimensions();
+  const galleryWidth = windowWidth ? Math.max(280, windowWidth - spacing.md * 2) : 320;
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
+  const [failedImages, setFailedImages] = useState<Record<number, boolean>>({});
+
+  const handleImageError = (index: number) => {
+    setFailedImages((prev) => ({ ...prev, [index]: true }));
+  };
+
+  const handleGalleryScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const offsetX = e.nativeEvent.contentOffset.x;
+    if (!provider?.images?.length || galleryWidth <= 0) return;
+    const idx = Math.min(
+      Math.max(0, Math.round(offsetX / galleryWidth)),
+      provider.images.length - 1,
+    );
+    setActiveImageIndex(idx);
+  };
+
+  const reviews = provider?.reviews;
+  const sortedReviews = useMemo(() => {
+    if (!reviews || reviews.length === 0) return [];
+    return [...reviews]
+      .sort((a, b) => b.reviewed_on.localeCompare(a.reviewed_on))
+      .slice(0, 5);
+  }, [reviews]);
 
   const loadProvider = useCallback(async () => {
     if (!providerId) {
@@ -225,6 +265,63 @@ export default function ProveedorScreen({
 
       {!loading && !networkError && !unexpectedError && provider ? (
         <View style={styles.body}>
+          {/* Galería de fotos o placeholder sin fotos (HU_EU_02_16, criterios 2.1, 4, 5 y 6) */}
+          {provider.images && provider.images.length > 0 ? (
+            <View style={styles.galleryContainer} testID="provider-gallery">
+              <ScrollView
+                testID="gallery-scroll-view"
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                onScroll={handleGalleryScroll}
+                scrollEventThrottle={16}
+                style={styles.galleryScroll}
+                contentContainerStyle={styles.galleryScrollContent}
+              >
+                {provider.images.map((img, idx) => {
+                  const hasFailed = Boolean(failedImages[idx]);
+                  if (hasFailed) {
+                    return (
+                      <View
+                        key={`fallback-${img.url}-${idx}`}
+                        testID={`gallery-placeholder-${idx}`}
+                        style={[styles.galleryImageFallback, { width: galleryWidth }]}
+                      />
+                    );
+                  }
+                  return (
+                    <Image
+                      key={`img-${img.url}-${idx}`}
+                      testID={`gallery-image-${idx}`}
+                      source={{ uri: img.url }}
+                      style={[styles.galleryImage, { width: galleryWidth }]}
+                      accessibilityLabel={img.alt_text || provider.name}
+                      onError={() => handleImageError(idx)}
+                    />
+                  );
+                })}
+              </ScrollView>
+
+              {/* Contador de fotos 'n/N' (criterio 2.1) */}
+              <View style={styles.galleryCounterBadge}>
+                <Text style={styles.galleryCounterText} testID="gallery-counter">
+                  {`${activeImageIndex + 1}/${provider.images.length}`}
+                </Text>
+              </View>
+            </View>
+          ) : (
+            <View
+              style={styles.galleryEmptyPlaceholder}
+              testID="gallery-empty-placeholder"
+              accessibilityLabel={provider.name}
+            >
+              <MinimalIcon name="decor" size={32} color={colors.muted} />
+              <Text style={styles.galleryEmptyPlaceholderName}>
+                {provider.name}
+              </Text>
+            </View>
+          )}
+
           {/* Encabezado: Nombre, rubros y estado de verificación (Criterios 2.1, 2.2, 2.5) */}
           <View style={styles.headerBlock}>
             <View style={styles.titleRow}>
@@ -256,6 +353,14 @@ export default function ProveedorScreen({
                   <Text style={styles.categoryChipText}>{CATEGORY_LABELS[cat] ?? cat}</Text>
                 </View>
               ))}
+            </View>
+
+            {/* Calificación promedio y número de reseñas o 'Sin reseñas' (HU_EU_02_16, criterios 2.2, 3.1 y 6) */}
+            <View style={styles.headerRatingRow} testID="provider-rating">
+              <RatingStars
+                ratingAvg={provider.rating_avg}
+                ratingCount={provider.rating_count}
+              />
             </View>
           </View>
 
@@ -331,6 +436,71 @@ export default function ProveedorScreen({
                 </Text>
               </View>
             </View>
+          </View>
+
+          {/* Sección 'Reseñas' (HU_EU_02_16, criterios 2.2, 2.3, 2.4, 3.1, 3.3, 4 y 6) */}
+          <View style={styles.card} testID="reviews-section">
+            <View style={styles.reviewsHeaderRow}>
+              <Text style={styles.cardSectionTitle} testID="reviews-section-title">
+                Reseñas
+              </Text>
+              {provider.rating_avg !== null && provider.rating_count > 0 ? (
+                <View style={styles.reviewsSummaryStars}>
+                  <RatingStars
+                    ratingAvg={provider.rating_avg}
+                    ratingCount={provider.rating_count}
+                  />
+                </View>
+              ) : null}
+            </View>
+
+            {/* Aviso obligatorio literal de reseñas de ejemplo (criterio 2.4 y RN-27) */}
+            <View style={styles.reviewsNoticeBox}>
+              <MinimalIcon name="check" size={14} color={colors.primary} />
+              <Text style={styles.reviewsNoticeText} testID="reviews-notice">
+                {DEMO_REVIEWS_NOTICE}
+              </Text>
+            </View>
+
+            {/* Lista de hasta 5 reseñas o texto 'Sin reseñas' */}
+            {sortedReviews.length === 0 ? (
+              <View style={styles.noReviewsBox} testID="reviews-empty">
+                <Text style={styles.noReviewsText}>{NO_REVIEWS_TEXT}</Text>
+              </View>
+            ) : (
+              <View style={styles.reviewsList} testID="reviews-list">
+                {sortedReviews.map((rev, idx) => (
+                  <View
+                    key={`${rev.author_name}-${rev.reviewed_on}-${idx}`}
+                    style={styles.reviewCard}
+                    testID={`review-item-${idx}`}
+                  >
+                    <View style={styles.reviewTopRow}>
+                      <Text style={styles.reviewAuthor} testID={`review-author-${idx}`}>
+                        {rev.author_name}
+                      </Text>
+                      <Text style={styles.reviewDate} testID={`review-date-${idx}`}>
+                        {rev.reviewed_on}
+                      </Text>
+                    </View>
+
+                    <View style={styles.reviewRatingRow} testID={`review-rating-${idx}`}>
+                      <Text style={styles.reviewStars}>
+                        {'★'.repeat(Math.max(1, Math.min(5, rev.rating)))}
+                        {'☆'.repeat(Math.max(0, 5 - Math.max(1, Math.min(5, rev.rating))))}
+                      </Text>
+                      <Text style={styles.reviewScoreText}>
+                        {rev.rating} de 5
+                      </Text>
+                    </View>
+
+                    <Text style={styles.reviewComment} testID={`review-comment-${idx}`}>
+                      {rev.comment}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
           </View>
 
           {/* Servicios del proveedor (Criterios 2.7 y 2.8) */}
@@ -790,5 +960,149 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: font.base,
     fontWeight: '600',
+  },
+  galleryContainer: {
+    position: 'relative',
+    height: 220,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#EEEEF4',
+    marginBottom: spacing.md,
+  },
+  galleryScroll: {
+    height: 220,
+  },
+  galleryScrollContent: {
+    alignItems: 'center',
+  },
+  galleryImage: {
+    height: 220,
+    resizeMode: 'cover',
+  },
+  galleryImageFallback: {
+    height: 220,
+    backgroundColor: '#EEEEF4',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  galleryCounterBadge: {
+    position: 'absolute',
+    bottom: spacing.sm,
+    right: spacing.sm,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  galleryCounterText: {
+    color: '#FFFFFF',
+    fontSize: font.base - 2,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  galleryEmptyPlaceholder: {
+    height: 180,
+    backgroundColor: '#EEEEF4',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    gap: spacing.xs,
+  },
+  galleryEmptyPlaceholderName: {
+    fontSize: font.title - 2,
+    fontWeight: '700',
+    color: colors.text,
+    textAlign: 'center',
+  },
+  headerRatingRow: {
+    marginTop: spacing.xs,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  reviewsHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  reviewsSummaryStars: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  reviewsNoticeBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    backgroundColor: '#F3F0FF',
+    borderWidth: 1,
+    borderColor: '#DDD6FE',
+    padding: spacing.sm,
+    borderRadius: 8,
+    marginBottom: spacing.sm,
+  },
+  reviewsNoticeText: {
+    fontSize: font.base - 2,
+    color: '#432874',
+    fontWeight: '500',
+    flex: 1,
+  },
+  noReviewsBox: {
+    paddingVertical: spacing.sm,
+    alignItems: 'center',
+  },
+  noReviewsText: {
+    fontSize: font.base,
+    color: colors.muted,
+    fontStyle: 'italic',
+  },
+  reviewsList: {
+    gap: spacing.sm,
+    marginTop: spacing.xs,
+  },
+  reviewCard: {
+    backgroundColor: '#F7F7FA',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.sm,
+    gap: 4,
+  },
+  reviewTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  reviewAuthor: {
+    fontSize: font.base,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  reviewDate: {
+    fontSize: font.base - 2,
+    color: colors.muted,
+  },
+  reviewRatingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  reviewStars: {
+    color: '#F59E0B',
+    fontSize: font.base,
+    fontWeight: '700',
+  },
+  reviewScoreText: {
+    fontSize: font.base - 2,
+    color: colors.muted,
+    fontWeight: '500',
+  },
+  reviewComment: {
+    fontSize: font.base,
+    color: colors.text,
+    lineHeight: 22,
   },
 });
