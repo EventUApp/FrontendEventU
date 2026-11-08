@@ -12,6 +12,14 @@ import {
   validateName,
   validatePhone,
   validatePriceRange,
+  validateCardNumber,
+  validateCardExpiry,
+  validateCardCvv,
+  formatCardNumber,
+  formatCardExpiry,
+  CARD_NUMBER_INVALID_MESSAGE,
+  CARD_EXPIRY_INVALID_MESSAGE,
+  CARD_CVV_INVALID_MESSAGE,
 } from '../src/utils/validators';
 
 describe('validateBudget (RN-19, criterios 3.1 y 3.2)', () => {
@@ -242,4 +250,119 @@ describe('validatePhone (HU_EU_03_09, criterio 3.3)', () => {
     expect(validatePhone(phone)).toBeNull();
   });
 });
+
+describe('validateCardNumber (HU_EU_03_10, criterios 2.2 y 3.1)', () => {
+  it('coincide exactamente con la constante CARD_NUMBER_INVALID_MESSAGE', () => {
+    expect(CARD_NUMBER_INVALID_MESSAGE).toBe('Ingrese un número de tarjeta válido.');
+  });
+
+  it.each([
+    '',
+    '   ',
+    '1234',
+    '424242424242424', // 15 dígitos
+    '42424242424242421', // 17 dígitos
+    '424242424242424a', // con letras
+    'abcd-efgh-ijkl-mnop',
+  ])('rechaza números vacíos o distintos de 16 dígitos numéricos (%j)', (input) => {
+    expect(validateCardNumber(input)).toBe('Ingrese un número de tarjeta válido.');
+  });
+
+  it.each([
+    '4242424242424242',
+    '4000000000000002',
+    '4242 4242 4242 4242',
+    '4000-0000-0000-0002',
+    ' 4242 4242 4242 4242 ',
+    '1234567890123456',
+  ])('acepta números válidos de 16 dígitos incluso con espacios o guiones (%s)', (input) => {
+    expect(validateCardNumber(input)).toBeNull();
+  });
+});
+
+describe('validateCardExpiry (HU_EU_03_10, criterios 2.3 y 3.2)', () => {
+  const referenceDate = new Date('2026-11-08T12:00:00Z');
+
+  it('coincide exactamente con la constante CARD_EXPIRY_INVALID_MESSAGE', () => {
+    expect(CARD_EXPIRY_INVALID_MESSAGE).toBe('Ingrese una fecha de vencimiento válida.');
+  });
+
+  it.each([
+    '',
+    '   ',
+    '12',
+    '12/2',
+    '12/202',
+    'abc',
+    '00/28', // mes 0
+    '13/28', // mes 13
+    '99/28',
+    '10/26', // mes pasado respecto a nov 2026
+    '12/25', // año pasado
+    '01/20', // año pasado
+    '12/99', // más de 30 años en el futuro
+  ])('rechaza fechas con formato inválido o vencidas (%j)', (input) => {
+    expect(validateCardExpiry(input, { now: referenceDate })).toBe(
+      'Ingrese una fecha de vencimiento válida.',
+    );
+  });
+
+  it.each([
+    '11/26', // mes actual
+    '12/26', // mes siguiente del año actual
+    '01/27',
+    '12/28',
+    '12/2028',
+    '12 / 28',
+    ' 05/29 ',
+  ])('acepta fechas de vencimiento válidas y vigentes (%s)', (input) => {
+    expect(validateCardExpiry(input, { now: referenceDate })).toBeNull();
+  });
+});
+
+describe('validateCardCvv (HU_EU_03_10, criterios 2.3 y 3.3)', () => {
+  it('coincide exactamente con la constante CARD_CVV_INVALID_MESSAGE', () => {
+    expect(CARD_CVV_INVALID_MESSAGE).toBe('Ingrese el código de seguridad.');
+  });
+
+  it.each([
+    '',
+    '   ',
+    '1',
+    '12',
+    '12345', // más de 4 dígitos
+    '12a',
+    'abc',
+    '-12',
+  ])('rechaza códigos vacíos, no numéricos o fuera de 3-4 dígitos (%j)', (input) => {
+    expect(validateCardCvv(input)).toBe('Ingrese el código de seguridad.');
+  });
+
+  it.each([
+    '123',
+    '000',
+    '999',
+    '1234',
+    '0123',
+    ' 123 ',
+  ])('acepta CVV numéricos de 3 o 4 dígitos (%s)', (input) => {
+    expect(validateCardCvv(input)).toBeNull();
+  });
+});
+
+describe('formatCardNumber y formatCardExpiry', () => {
+  it('formatCardNumber agrupa los dígitos de 4 en 4', () => {
+    expect(formatCardNumber('4242424242424242')).toBe('4242 4242 4242 4242');
+    expect(formatCardNumber('424242')).toBe('4242 42');
+    expect(formatCardNumber('42')).toBe('42');
+    expect(formatCardNumber('42424242424242429999')).toBe('4242 4242 4242 4242');
+  });
+
+  it('formatCardExpiry inserta la barra tras los dos dígitos del mes', () => {
+    expect(formatCardExpiry('1228')).toBe('12/28');
+    expect(formatCardExpiry('12')).toBe('12');
+    expect(formatCardExpiry('1')).toBe('1');
+  });
+});
+
 

@@ -257,6 +257,7 @@ export default function DatosClienteScreen({
         customer: cleanCustomer,
         eventDate: cleanDate,
         reservationCode: response.code,
+        reservationTotalCop: response.total_cop,
       });
 
       if (navigation) {
