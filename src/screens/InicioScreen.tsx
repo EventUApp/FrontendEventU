@@ -16,6 +16,7 @@ import { getHome } from '../api/endpoints';
 import type { Category, EventType, HomeResponse, ProviderSummary } from '../api/types';
 import { FieldError } from '../components/FieldError';
 import { LoadingNotice } from '../components/LoadingNotice';
+import { MinimalIcon, type MinimalIconName } from '../components/MinimalIcon';
 import { NetworkErrorView } from '../components/NetworkErrorView';
 import type { RootStackParamList, TabParamList } from '../navigation/types';
 import { useFlow } from '../state/FlowContext';
@@ -52,26 +53,35 @@ const EVENT_TYPE_OPTIONS: { value: EventType; label: string }[] = [
   { value: 'xv', label: 'XV años' },
 ];
 
-const CATEGORY_META: { category: Category; label: string; summary: string }[] = [
+const CATEGORY_META: {
+  category: Category;
+  label: string;
+  summary: string;
+  icon: MinimalIconName;
+}[] = [
   {
     category: 'espacio',
     label: 'Espacio',
     summary: 'Salones, haciendas y jardines',
+    icon: 'venue',
   },
   {
     category: 'alimentacion',
     label: 'Alimentación',
     summary: 'Banquetes, catering y bebidas',
+    icon: 'catering',
   },
   {
     category: 'decoracion',
     label: 'Decoración',
     summary: 'Diseño floral y mobiliario',
+    icon: 'decor',
   },
   {
     category: 'entretenimiento',
     label: 'Entretenimiento',
     summary: 'Música en vivo, DJ y sonido',
+    icon: 'music',
   },
 ];
 
@@ -276,6 +286,7 @@ export default function InicioScreen() {
             pressed ? styles.interactivePressed : null,
           ]}
         >
+          <MinimalIcon name="event" size={18} color={surfaceTokens.accentText} />
           <Text style={styles.myEventLabel}>Mi evento</Text>
           <View style={styles.myEventBadge}>
             <Text style={styles.myEventBadgeText}>{flow.cart.length}</Text>
@@ -286,7 +297,10 @@ export default function InicioScreen() {
       {/* Buscador principal (criterio 2.1 y validaciones 3.1 a 3.3) */}
       <View style={styles.searchPanel}>
         <View style={styles.formGroup}>
-          <Text style={styles.label}>Tipo de evento</Text>
+          <View style={styles.fieldTitleGroup}>
+            <MinimalIcon name="decor" size={16} color={colors.primary} />
+            <Text style={styles.label}>Tipo de evento</Text>
+          </View>
           <View style={styles.optionsRow} accessibilityRole="radiogroup">
             {EVENT_TYPE_OPTIONS.map((option) => {
               const selected = eventType === option.value;
@@ -323,7 +337,10 @@ export default function InicioScreen() {
 
         <View style={styles.formGroup}>
           <View style={styles.labelRow}>
-            <Text style={styles.label}>Número de invitados</Text>
+            <View style={styles.fieldTitleGroup}>
+              <MinimalIcon name="users" size={16} color={colors.primary} />
+              <Text style={styles.label}>Número de invitados</Text>
+            </View>
             <Text style={styles.fieldHint}>1 a 500 personas</Text>
           </View>
           <TextInput
@@ -341,7 +358,10 @@ export default function InicioScreen() {
 
         <View style={styles.formGroup}>
           <View style={styles.labelRow}>
-            <Text style={styles.label}>Fecha del evento</Text>
+            <View style={styles.fieldTitleGroup}>
+              <MinimalIcon name="calendar" size={16} color={colors.primary} />
+              <Text style={styles.label}>Fecha del evento</Text>
+            </View>
             <Text style={styles.fieldHint}>Opcional · AAAA-MM-DD</Text>
           </View>
           <TextInput
@@ -403,6 +423,7 @@ export default function InicioScreen() {
             pressed ? styles.interactivePressed : null,
           ]}
         >
+          <MinimalIcon name="search" size={18} color={colors.background} />
           <Text style={styles.searchButtonText}>Buscar</Text>
         </Pressable>
       </View>
@@ -417,6 +438,9 @@ export default function InicioScreen() {
           pressed ? styles.interactivePressed : null,
         ]}
       >
+        <View style={styles.shortcutIconBox}>
+          <MinimalIcon name="budget" size={20} color={surfaceTokens.accentText} />
+        </View>
         <View style={styles.shortcutContent}>
           <Text style={styles.shortcutTitle}>Arma mi evento por presupuesto</Text>
           <Text style={styles.shortcutSubtitle}>
@@ -424,11 +448,11 @@ export default function InicioScreen() {
           </Text>
         </View>
         <View style={styles.shortcutCtaPill}>
-          <Text style={styles.shortcutCtaText}>Ir</Text>
+          <MinimalIcon name="chevron-right" size={18} color={colors.background} />
         </View>
       </Pressable>
 
-      {/* Directorio de categorías (criterio 2.2) */}
+      {/* Directorio de categorías con iconos minimalistas (criterio 2.2) */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Categorías</Text>
         <View style={styles.categoriesGrid}>
@@ -446,13 +470,23 @@ export default function InicioScreen() {
                   pressed ? styles.interactivePressed : null,
                 ]}
               >
-                <View style={styles.categoryHeaderRow}>
-                  <Text style={styles.categoryLabel}>{item.label}</Text>
-                  <View style={styles.categoryCountBadge}>
-                    <Text style={styles.categoryCount}>{count} proveedores</Text>
-                  </View>
+                <View style={styles.categoryIconBadge}>
+                  <MinimalIcon
+                    name={item.icon}
+                    size={20}
+                    color={surfaceTokens.accentText}
+                  />
                 </View>
-                <Text style={styles.categorySummary}>{item.summary}</Text>
+                <View style={styles.categoryTextColumn}>
+                  <View style={styles.categoryHeaderRow}>
+                    <Text style={styles.categoryLabel}>{item.label}</Text>
+                    <View style={styles.categoryCountBadge}>
+                      <Text style={styles.categoryCount}>{count} proveedores</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.categorySummary}>{item.summary}</Text>
+                </View>
+                <MinimalIcon name="chevron-right" size={16} color={colors.muted} />
               </Pressable>
             );
           })}
@@ -541,14 +575,22 @@ export default function InicioScreen() {
                     <Text style={styles.featuredName}>{provider.name}</Text>
                     {provider.verification_status === 'verificado' ? (
                       <View style={styles.verifiedBadge}>
+                        <MinimalIcon
+                          name="check"
+                          size={14}
+                          color={surfaceTokens.verifiedText}
+                        />
                         <Text style={styles.verifiedBadgeText}>Verificado</Text>
                       </View>
                     ) : null}
                   </View>
 
-                  <Text style={styles.featuredLocation}>
-                    {provider.neighborhood} · {provider.municipality}
-                  </Text>
+                  <View style={styles.locationRow}>
+                    <MinimalIcon name="pin" size={15} color={colors.muted} />
+                    <Text style={styles.featuredLocation}>
+                      {provider.neighborhood} · {provider.municipality}
+                    </Text>
+                  </View>
 
                   {provider.categories.length > 0 ? (
                     <View style={styles.featuredTagsRow}>
@@ -564,6 +606,7 @@ export default function InicioScreen() {
 
                   <View style={styles.featuredFooter}>
                     <View style={styles.ratingGroup}>
+                      <MinimalIcon name="star" size={15} color={colors.primary} />
                       <Text style={styles.featuredRating}>{ratingText}</Text>
                       {hasRating ? (
                         <Text style={styles.featuredReviewCount}>
@@ -663,10 +706,15 @@ const styles = StyleSheet.create({
   formGroup: {
     gap: spacing.xs,
   },
+  fieldTitleGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
   labelRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'baseline',
+    alignItems: 'center',
     gap: spacing.sm,
   },
   label: {
@@ -765,6 +813,8 @@ const styles = StyleSheet.create({
   },
   searchButton: {
     minHeight: MIN_TOUCH + 4,
+    flexDirection: 'row',
+    gap: spacing.sm,
     backgroundColor: colors.primary,
     borderRadius: 10,
     justifyContent: 'center',
@@ -789,6 +839,16 @@ const styles = StyleSheet.create({
     backgroundColor: surfaceTokens.accentSurface,
     gap: spacing.md,
   },
+  shortcutIconBox: {
+    width: 42,
+    height: 42,
+    borderRadius: 10,
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: surfaceTokens.accentBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   shortcutContent: {
     flex: 1,
     gap: spacing.xs,
@@ -806,16 +866,10 @@ const styles = StyleSheet.create({
   shortcutCtaPill: {
     minHeight: MIN_TOUCH,
     minWidth: MIN_TOUCH,
-    paddingHorizontal: spacing.md,
     borderRadius: 10,
     backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  shortcutCtaText: {
-    color: colors.background,
-    fontSize: font.base,
-    fontWeight: '700',
   },
   section: {
     gap: spacing.md,
@@ -842,12 +896,28 @@ const styles = StyleSheet.create({
   },
   categoryCard: {
     minHeight: MIN_TOUCH,
+    flexDirection: 'row',
+    alignItems: 'center',
     padding: spacing.md,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.background,
-    gap: spacing.xs,
+    gap: spacing.md,
+  },
+  categoryIconBadge: {
+    width: 42,
+    height: 42,
+    borderRadius: 10,
+    backgroundColor: surfaceTokens.accentSurface,
+    borderWidth: 1,
+    borderColor: surfaceTokens.accentBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  categoryTextColumn: {
+    flex: 1,
+    gap: 2,
   },
   categoryHeaderRow: {
     flexDirection: 'row',
@@ -948,6 +1018,9 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
   verifiedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     paddingHorizontal: spacing.sm,
     paddingVertical: 2,
     borderRadius: 6,
@@ -957,6 +1030,11 @@ const styles = StyleSheet.create({
     fontSize: font.base,
     fontWeight: '600',
     color: surfaceTokens.verifiedText,
+  },
+  locationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
   },
   featuredLocation: {
     fontSize: font.base,
