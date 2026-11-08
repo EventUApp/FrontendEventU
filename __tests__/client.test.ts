@@ -8,6 +8,7 @@ import {
   postRecommendations,
   postReservation,
   postPayment,
+  getReservation,
 } from '../src/api/endpoints';
 import type {
   CatalogItem,
@@ -928,6 +929,124 @@ describe('postPayment (HU_EU_03_10, ADR-05, SAD §7.1)', () => {
     });
   });
 });
+
+describe('getReservation (HU_EU_03_11, SAD §5.5, §7.1)', () => {
+  afterEach(() => jest.resetAllMocks());
+
+  const samplePaidReservation: Reservation = {
+    code: 'EU-8K9M2P',
+    status: 'pagada',
+    total_cop: 4_300_000,
+    items: [
+      {
+        service_id: 'svc-esp-1',
+        name: 'Salón Campestre',
+        provider_id: 'prv-1',
+        provider_name: 'Hacienda Real',
+        verification_status: 'verificado',
+        cost_cop: 2_000_000,
+      },
+      {
+        service_id: 'svc-ali-1',
+        name: 'Banquete 3 Tiempos',
+        provider_id: 'prv-2',
+        provider_name: 'Catering Gourmet',
+        verification_status: 'verificado',
+        cost_cop: 1_500_000,
+      },
+    ],
+    customer: {
+      name: 'Carlos Mendoza',
+      email: 'carlos@ejemplo.co',
+      phone: '3001234567',
+    },
+    event_date: '2027-06-15',
+    payment: {
+      status: 'aprobado',
+      reference: 'SIM-REF-998877',
+    },
+  };
+
+  it('consulta GET /api/v1/reservations/{code} y devuelve los datos completos de la reserva (criterio 1 y 5)', async () => {
+    g.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => samplePaidReservation,
+    });
+
+    const res = await getReservation('EU-8K9M2P');
+
+    expect(g.fetch).toHaveBeenCalledTimes(1);
+    const [url, init] = g.fetch.mock.calls[0];
+    expect(url).toBe('https://api.ejemplo.test/api/v1/reservations/EU-8K9M2P');
+    expect(init.method).toBe('GET');
+    expect(res).toEqual(samplePaidReservation);
+    expect(res.code).toBe('EU-8K9M2P');
+    expect(res.status).toBe('pagada');
+    expect(res.items).toHaveLength(2);
+    expect(res.payment?.status).toBe('aprobado');
+  });
+
+  it('propaga ApiError 404 NOT_FOUND cuando la reserva no existe (criterio 6, SAD §5.5)', async () => {
+    g.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({
+        error: {
+          code: 'NOT_FOUND',
+          message: 'No encontramos una reserva con ese número.',
+        },
+      }),
+    });
+
+    await expect(getReservation('EU-NONEXIST')).rejects.toMatchObject({
+      status: 404,
+      code: 'NOT_FOUND',
+    });
+  });
+
+  it('propaga ApiError 422 VALIDATION_ERROR si el formato del código es inválido (SAD §7.1)', async () => {
+    g.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: async () => ({
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'El número de reserva no es válido.',
+        },
+      }),
+    });
+
+    await expect(getReservation('invalido')).rejects.toMatchObject({
+      status: 422,
+      code: 'VALIDATION_ERROR',
+    });
+  });
+
+  it('propaga NetworkError ante fallos de conexión (criterio 6, HU_EU_01_04)', async () => {
+    g.fetch = jest.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+    await expect(getReservation('EU-8K9M2P')).rejects.toBeInstanceOf(NetworkError);
+  });
+
+  it('propaga ApiError con mensaje genérico si el servidor responde 500 (criterio 6, SAD §7.3)', async () => {
+    g.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Database connection failed',
+        },
+      }),
+    });
+
+    await expect(getReservation('EU-8K9M2P')).rejects.toMatchObject({
+      status: 500,
+      message: GENERIC_ERROR,
+    });
+  });
+});
+
 
 
 
