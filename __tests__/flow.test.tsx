@@ -1,9 +1,20 @@
 import React, { act } from 'react';
 import { Pressable, Text } from 'react-native';
 import { createRoot, type TestInstance } from 'test-renderer';
+import type { RecommendationResponse } from '../src/api/types';
+import * as endpoints from '../src/api/endpoints';
 import { LoadingNotice } from '../src/components/LoadingNotice';
 import { NetworkErrorView } from '../src/components/NetworkErrorView';
+import { SLOW_NOTICE_MS } from '../src/config/limits';
+import PaquetesScreen from '../src/screens/PaquetesScreen';
+import PresupuestoScreen from '../src/screens/PresupuestoScreen';
 import { FlowProvider, initialFlow, useFlow, type FlowState } from '../src/state/FlowContext';
+
+const mockNavigate = jest.fn();
+
+jest.mock('@react-navigation/native', () => ({
+  useNavigation: () => ({ navigate: mockNavigate }),
+}));
 
 function textOf(node: TestInstance): string {
   return node.children
@@ -193,5 +204,179 @@ describe('FlowContext — conservación del estado al navegar y volver atrás (H
     });
     const resetSnapshot = JSON.parse(textOf(findByTestId(root.container, 'flow-json'))) as FlowState;
     expect(resetSnapshot).toEqual(initialFlow);
+  });
+});
+
+describe('Escenarios de red simulados y navegación real entre pantallas (T_HU_EU_01_04_3)', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+    mockNavigate.mockReset();
+  });
+
+  it('criterio 3.1 y 3.2: con respuesta lenta muestra el aviso de arranque en frío y bloquea el botón de envío mientras tarda', async () => {
+    let triggerSlow: (() => void) | undefined;
+    let resolveRequest: ((val: RecommendationResponse) => void) | undefined;
+
+    const spy = jest.spyOn(endpoints, 'postRecommendations').mockImplementation((_body, opts) => {
+      triggerSlow = opts?.onSlow;
+      return new Promise((resolve) => {
+        resolveRequest = resolve;
+      });
+    });
+
+    const root = createRoot();
+    act(() => {
+      root.render(
+        <FlowProvider>
+          <PresupuestoScreen />
+        </FlowProvider>,
+      );
+    });
+
+    act(() => {
+      findByTestId(root.container, 'input-budget').props.onChangeText('8.000.000');
+      press(findByTestId(root.container, 'option-boda'));
+      findByTestId(root.container, 'input-guests').props.onChangeText('90');
+    });
+
+    // Inicia la petición (queda en curso)
+    act(() => {
+      void press(findByTestId(root.container, 'btn-submit'));
+    });
+
+    // El botón está deshabilitado y un segundo clic no dispara una segunda petición (criterio 3.1)
+    expect(findByTestId(root.container, 'btn-submit').props.accessibilityState).toMatchObject({
+      disabled: true,
+    });
+    act(() => {
+      void press(findByTestId(root.container, 'btn-submit'));
+    });
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // Simula que transcurrieron los 5 s de arranque en frío (SLOW_NOTICE_MS, criterio 3.2)
+    expect(SLOW_NOTICE_MS).toBe(5_000);
+    act(() => {
+      triggerSlow?.();
+    });
+
+    expect(findAllText(root.container)).toContain(
+      'Estamos conectando con el servidor. Esto puede tardar un momento.',
+    );
+
+    // Finalmente responde el servidor
+    await act(async () => {
+      resolveRequest?.({ packages: [], unavailable: [] });
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith('Paquetes');
+  });
+
+  it('criterio 4 y 5: ir de PresupuestoScreen a PaquetesScreen y volver atrás conserva presupuesto, tipo de evento, invitados y paquete elegido', async () => {
+    jest.spyOn(endpoints, 'postRecommendations').mockResolvedValue({
+      packages: [
+        {
+          modality: 'ahorro',
+          total_cop: 5_000_000,
+          remaining_cop: 3_000_000,
+          breakdown: [
+            {
+              category: 'espacio',
+              subtotal_cop: 2_000_000,
+              items: [
+                {
+                  service_id: 'svc-e1',
+                  name: 'Salón Cali',
+                  provider_id: 'prv-1',
+                  provider_name: 'Eventos Sur',
+                  verification_status: 'verificado',
+                  cost_cop: 2_000_000,
+                },
+              ],
+            },
+            {
+              category: 'alimentacion',
+              subtotal_cop: 2_000_000,
+              items: [
+                {
+                  service_id: 'svc-a1',
+                  name: 'Banquete Cali',
+                  provider_id: 'prv-2',
+                  provider_name: 'Sabores Sur',
+                  verification_status: 'verificado',
+                  cost_cop: 2_000_000,
+                },
+              ],
+            },
+            {
+              category: 'decoracion',
+              subtotal_cop: 1_000_000,
+              items: [
+                {
+                  service_id: 'svc-d1',
+                  name: 'Flores Cali',
+                  provider_id: 'prv-3',
+                  provider_name: 'Arte Sur',
+                  verification_status: 'verificado',
+                  cost_cop: 1_000_000,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      unavailable: [],
+    });
+
+    function TwoScreenHarness() {
+      const [route, setRoute] = React.useState<'Presupuesto' | 'Paquetes'>('Presupuesto');
+      return (
+        <>
+          <Pressable testID="nav-to-paquetes" onPress={() => setRoute('Paquetes')} />
+          <Pressable testID="nav-back-presupuesto" onPress={() => setRoute('Presupuesto')} />
+          {route === 'Presupuesto' ? <PresupuestoScreen /> : <PaquetesScreen />}
+        </>
+      );
+    }
+
+    const root = createRoot();
+    act(() => {
+      root.render(
+        <FlowProvider>
+          <TwoScreenHarness />
+        </FlowProvider>,
+      );
+    });
+
+    // Ingresa datos en PresupuestoScreen y envía
+    act(() => {
+      findByTestId(root.container, 'input-budget').props.onChangeText('8000000');
+      press(findByTestId(root.container, 'option-xv'));
+      findByTestId(root.container, 'input-guests').props.onChangeText('120');
+    });
+
+    await act(async () => {
+      await press(findByTestId(root.container, 'btn-submit'));
+    });
+
+    // Pasa a PaquetesScreen y elige el paquete Ahorro
+    act(() => {
+      press(findByTestId(root.container, 'nav-to-paquetes'));
+    });
+    expect(findAllText(root.container).join(' ')).toContain('XV años · 120 invitados');
+
+    act(() => {
+      press(findByTestId(root.container, 'choose-package-ahorro'));
+    });
+
+    // Vuelve atrás a PresupuestoScreen (desmonta PaquetesScreen y monta PresupuestoScreen de nuevo)
+    act(() => {
+      press(findByTestId(root.container, 'nav-back-presupuesto'));
+    });
+
+    expect(findByTestId(root.container, 'input-budget').props.value).toBe('8000000');
+    expect(findByTestId(root.container, 'input-guests').props.value).toBe('120');
+    expect(findByTestId(root.container, 'option-xv').props.accessibilityState).toMatchObject({
+      selected: true,
+    });
   });
 });
