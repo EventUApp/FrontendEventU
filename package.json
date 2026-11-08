@@ -36,6 +36,7 @@
   "private": true,
   "jest": {
     "preset": "jest-expo",
+    "testTimeout": 30000,
     "testMatch": [
       "**/__tests__/**/*.test.ts?(x)"
     ]
