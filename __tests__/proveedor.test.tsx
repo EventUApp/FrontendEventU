@@ -380,3 +380,220 @@ describe('ProveedorScreen (HU_EU_02_08 — T_HU_EU_02_08_3)', () => {
     expect(textOf(find(c, 'provider-name'))).toBe('Hacienda Real');
   });
 });
+
+describe('T_HU_EU_02_08_5: Casos de la regla de verificación, proveedor inexistente y ficha completa', () => {
+  const mockNavigate = jest.fn();
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (useNavigation as jest.Mock).mockReturnValue({ navigate: mockNavigate });
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  describe('Regla de verificación (RN-07, RF-PRO-02, RF-PRO-03, RF-PRO-05, criterios 2.5, 2.6, 3.1, 4 y 5)', () => {
+    it.each<{
+      caso: string;
+      status: 'verificado' | 'en_revision';
+      checks: { type: string; date: string }[];
+      expectedBadge: 'Verificado' | 'En revisión';
+      shouldShowNotice: boolean;
+      shouldShowChecks: boolean;
+    }>([
+      {
+        caso: 'verificado con una comprobación documentada -> Verificado con aviso y comprobaciones',
+        status: 'verificado',
+        checks: [{ type: 'Cámara de Comercio', date: '2026-01-10' }],
+        expectedBadge: 'Verificado',
+        shouldShowNotice: true,
+        shouldShowChecks: true,
+      },
+      {
+        caso: 'verificado con múltiples comprobaciones documentadas -> Verificado con aviso y todas las comprobaciones',
+        status: 'verificado',
+        checks: [
+          { type: 'RUT', date: '2026-01-05' },
+          { type: 'Cámara de Comercio', date: '2026-01-10' },
+          { type: 'Visita técnica', date: '2026-02-15' },
+        ],
+        expectedBadge: 'Verificado',
+        shouldShowNotice: true,
+        shouldShowChecks: true,
+      },
+      {
+        caso: 'status verificado pero sin comprobaciones (checks vacíos) -> En revisión, sin aviso ni comprobaciones (RN-07, 3.1, 4)',
+        status: 'verificado',
+        checks: [],
+        expectedBadge: 'En revisión',
+        shouldShowNotice: false,
+        shouldShowChecks: false,
+      },
+      {
+        caso: 'status en_revision sin comprobaciones -> En revisión, sin aviso ni comprobaciones',
+        status: 'en_revision',
+        checks: [],
+        expectedBadge: 'En revisión',
+        shouldShowNotice: false,
+        shouldShowChecks: false,
+      },
+      {
+        caso: 'status en_revision aunque tenga comprobaciones -> En revisión, sin aviso ni comprobaciones',
+        status: 'en_revision',
+        checks: [{ type: 'RUT', date: '2026-01-05' }],
+        expectedBadge: 'En revisión',
+        shouldShowNotice: false,
+        shouldShowChecks: false,
+      },
+    ])(
+      '$caso',
+      async ({ status, checks, expectedBadge, shouldShowNotice, shouldShowChecks }) => {
+        const testProvider: Provider = {
+          ...verifiedProvider,
+          id: `prv-test-${status}-${checks.length}`,
+          verification: { status, checks },
+        };
+        jest.spyOn(endpoints, 'getProvider').mockResolvedValue(testProvider);
+
+        const root = await renderScreen(testProvider.id);
+        const c = root.container;
+
+        expect(textOf(find(c, 'verification-badge'))).toBe(expectedBadge);
+        expect(has(c, 'verification-notice')).toBe(shouldShowNotice);
+        if (shouldShowNotice) {
+          expect(textOf(find(c, 'verification-notice'))).toBe(VERIFICATION_WARNING_MESSAGE);
+        }
+
+        expect(has(c, 'checks-section')).toBe(shouldShowChecks);
+        if (shouldShowChecks) {
+          for (const chk of checks) {
+            expect(findAllText(c)).toContain(chk.type);
+            expect(findAllText(c)).toContain(chk.date);
+          }
+        }
+      },
+    );
+  });
+
+  describe('Validación de capacidad por invitados en bordes exactos (criterio 3.3, RN-14)', () => {
+    it.each<{
+      caso: string;
+      guests: number;
+      admitsSalon: boolean;
+      admitsKiosko: boolean;
+    }>([
+      {
+        caso: 'exactamente en el mínimo de Salón (50 invitados) -> Salón admite, Kiosko admite',
+        guests: 50,
+        admitsSalon: true,
+        admitsKiosko: true,
+      },
+      {
+        caso: 'exactamente en el máximo de Kiosko (60 invitados) -> Salón admite, Kiosko admite',
+        guests: 60,
+        admitsSalon: true,
+        admitsKiosko: true,
+      },
+      {
+        caso: '1 por encima del máximo de Kiosko (61 invitados) -> Salón admite, Kiosko NO admite',
+        guests: 61,
+        admitsSalon: true,
+        admitsKiosko: false,
+      },
+      {
+        caso: '1 por debajo del mínimo de Salón (49 invitados) -> Salón NO admite, Kiosko admite',
+        guests: 49,
+        admitsSalon: false,
+        admitsKiosko: true,
+      },
+      {
+        caso: 'exactamente en el máximo de Salón (200 invitados) -> Salón admite, Kiosko NO admite',
+        guests: 200,
+        admitsSalon: true,
+        admitsKiosko: false,
+      },
+      {
+        caso: '1 por encima del máximo de Salón (201 invitados) -> Ninguno admite',
+        guests: 201,
+        admitsSalon: false,
+        admitsKiosko: false,
+      },
+    ])(
+      '$caso',
+      async ({ guests, admitsSalon, admitsKiosko }) => {
+        jest.spyOn(endpoints, 'getProvider').mockResolvedValue(verifiedProvider);
+
+        const root = await renderScreen(verifiedProvider.id, { guests });
+        const c = root.container;
+
+        const btnSalon = find(c, 'btn-add-service-svc-salon-campestre');
+        expect(btnSalon.props.accessibilityState).toMatchObject({ disabled: !admitsSalon });
+        expect(has(c, 'ineligible-notice-svc-salon-campestre')).toBe(!admitsSalon);
+
+        const btnKiosko = find(c, 'btn-add-service-svc-kiosko-pequeno');
+        expect(btnKiosko.props.accessibilityState).toMatchObject({ disabled: !admitsKiosko });
+        expect(has(c, 'ineligible-notice-svc-kiosko-pequeno')).toBe(!admitsKiosko);
+      },
+    );
+  });
+
+  describe('Adición a Mi evento y sustitución de rubro (criterio 2.8, RN-23)', () => {
+    it('sustituye servicio del mismo rubro y conserva servicios de otros rubros', async () => {
+      jest.spyOn(endpoints, 'getProvider').mockResolvedValue(verifiedProvider);
+
+      const existingCart = [
+        {
+          service_id: 'svc-espacio-viejo',
+          name: 'Salón Viejo',
+          category: 'espacio' as const,
+          provider_id: 'prv-otro',
+          provider_name: 'Otro Proveedor',
+          price_model: 'fijo' as const,
+          unit_price_cop: 2_000_000,
+          min_guests: 10,
+          max_guests: 300,
+        },
+        {
+          service_id: 'svc-banquete-existente',
+          name: 'Banquete Gourmet',
+          category: 'alimentacion' as const,
+          provider_id: 'prv-banquetes',
+          provider_name: 'Banquetes Cali',
+          price_model: 'fijo' as const,
+          unit_price_cop: 3_000_000,
+          min_guests: 10,
+          max_guests: 300,
+        },
+      ];
+
+      const root = await renderScreen(verifiedProvider.id, {
+        cart: existingCart,
+        guests: 100,
+      });
+      const c = root.container;
+
+      await act(async () => {
+        press(find(c, 'btn-add-service-svc-salon-campestre'));
+      });
+
+      const flowSnap = snapshot(c);
+      expect(flowSnap.cart.map((s) => s.service_id)).toEqual([
+        'svc-banquete-existente',
+        'svc-salon-campestre',
+      ]);
+      expect(flowSnap.cart.map((s) => s.category)).toEqual(['alimentacion', 'espacio']);
+      expect(flowSnap.cartOrigin).toBe('personalizado');
+    });
+  });
+
+  describe('Casos de fallo y proveedor inexistente (criterio 6)', () => {
+    it('muestra mensaje literal cuando providerId está vacío o ausente', async () => {
+      const root = await renderScreen('');
+      const c = root.container;
+
+      expect(has(c, 'provider-not-found')).toBe(true);
+      expect(textOf(find(c, 'provider-not-found'))).toBe(NOT_FOUND_MESSAGE);
+    });
+  });
+});
