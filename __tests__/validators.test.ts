@@ -138,8 +138,11 @@ describe('validatePriceRange (HU_EU_02_15, criterios 2.3, 3.1 y 3.2)', () => {
     [1_000_000, null, 'solo mínimo definido'],
     [null, 5_000_000, 'solo máximo definido'],
     [1_000_000, 1_000_000, 'mínimo igual a máximo'],
+    [0, 0, 'ambos cero'],
+    [1, 1, 'enteros mínimos iguales'],
     [500_000, 2_000_000, 'mínimo menor que máximo'],
     [0, 10_000_000, 'mínimo cero'],
+    [10_000_000, 10_000_001, 'diferencia mínima de una unidad'],
   ])('acepta rangos válidos: %s y %s (%s)', (min, max, _desc) => {
     expect(validatePriceRange(min, max)).toBeNull();
   });
@@ -148,6 +151,7 @@ describe('validatePriceRange (HU_EU_02_15, criterios 2.3, 3.1 y 3.2)', () => {
     [2_000_000, 1_000_000],
     [5_000_001, 5_000_000],
     [10_000_000, 0],
+    [1, 0],
     [100_000_000, 50_000_000],
   ])('rechaza cuando min (%d) > max (%d) con mensaje literal', (min, max) => {
     expect(validatePriceRange(min, max)).toBe('El precio mínimo no puede ser mayor que el máximo.');

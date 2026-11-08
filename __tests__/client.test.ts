@@ -287,6 +287,57 @@ describe('getProviders (HU_EU_02_05 — T_HU_EU_02_05_4)', () => {
     expect(calledUrl).toContain('page_size=10');
   });
 
+  it('serializa todos los filtros combinados y parámetros en la URL (HU_EU_02_15 / T_HU_EU_02_15_3)', async () => {
+    const mockProviders: ProvidersResponse = {
+      items: [],
+      total: 0,
+      page: 1,
+      page_size: 10,
+    };
+    g.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => mockProviders });
+
+    await getProviders({
+      category: 'alimentacion',
+      event_type: 'xv',
+      min_price_cop: 1_500_000,
+      max_price_cop: 6_000_000,
+      min_rating: 4.5,
+      verified: true,
+      sort: 'precio_asc',
+      page: 2,
+      page_size: 20,
+    });
+
+    const calledUrl = g.fetch.mock.calls[0][0] as string;
+    expect(calledUrl).toContain('category=alimentacion');
+    expect(calledUrl).toContain('event_type=xv');
+    expect(calledUrl).toContain('min_price_cop=1500000');
+    expect(calledUrl).toContain('max_price_cop=6000000');
+    expect(calledUrl).toContain('min_rating=4.5');
+    expect(calledUrl).toContain('verified=true');
+    expect(calledUrl).toContain('sort=precio_asc');
+    expect(calledUrl).toContain('page=2');
+    expect(calledUrl).toContain('page_size=20');
+  });
+
+  it.each([
+    'recomendados',
+    'precio_asc',
+    'precio_desc',
+    'calificacion',
+  ] as const)(
+    'serializa la opción de orden determinista %s según RN-26 (criterios 2.6 y 3.3)',
+    async (sortOrder) => {
+      const mockProviders: ProvidersResponse = { items: [], total: 0, page: 1, page_size: 10 };
+      g.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => mockProviders });
+
+      await getProviders({ sort: sortOrder });
+
+      const calledUrl = g.fetch.mock.calls[0][0] as string;
+      expect(calledUrl).toContain(`sort=${sortOrder}`);
+    },
+  );
+
   it('propaga NetworkError y sanitiza errores 500 con mensaje genérico (criterio 6)', async () => {
     g.fetch = jest.fn().mockRejectedValueOnce(new TypeError('Network failure'));
     await expect(getProviders({ page: 1, page_size: 10 })).rejects.toBeInstanceOf(NetworkError);
