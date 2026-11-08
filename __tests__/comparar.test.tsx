@@ -4,9 +4,11 @@ import { Pressable, Text } from 'react-native';
 import { createRoot, type TestInstance } from 'test-renderer';
 import { ApiError, GENERIC_ERROR, NetworkError } from '../src/api/client';
 import * as endpoints from '../src/api/endpoints';
-import type { Package } from '../src/api/types';
+import type { Modality, Package } from '../src/api/types';
 import CompararScreen from '../src/screens/CompararScreen';
 import { FlowProvider, useFlow, type FlowState } from '../src/state/FlowContext';
+import { packageToCartServices } from '../src/utils/cart';
+import { formatCOP } from '../src/utils/money';
 
 jest.mock('@react-navigation/native', () => {
   const actual = jest.requireActual('@react-navigation/native');
@@ -478,5 +480,315 @@ describe('CompararScreen (HU_EU_02_07 — T_HU_EU_02_07_1)', () => {
     expect(textOf(find(c, 'compare-empty-notice'))).toContain(
       'No hay paquetes para comparar.',
     );
+  });
+});
+
+describe('T_HU_EU_02_07_2: Pruebas de selección mínima, coincidencia con el paquete y paso a Mi evento', () => {
+  const mockNavigate = jest.fn();
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (useNavigation as jest.Mock).mockReturnValue({ navigate: mockNavigate });
+  });
+
+  describe('Casos de selección mínima y combinaciones de paquetes (criterios 2.1, 3.1, 6)', () => {
+    it.each<{
+      caso: string;
+      toToggle: Modality[];
+      expectedChecked: Modality[];
+      expectedError: boolean;
+      expectedCards: Modality[];
+    }>([
+      {
+        caso: 'deselecciona todos (0 seleccionados) -> muestra mensaje de validación y oculta tarjetas',
+        toToggle: ['ahorro', 'equilibrado'],
+        expectedChecked: [],
+        expectedError: true,
+        expectedCards: [],
+      },
+      {
+        caso: 'queda solo 1 seleccionado (ahorro) -> muestra mensaje de validación y oculta tarjetas',
+        toToggle: ['equilibrado'],
+        expectedChecked: ['ahorro'],
+        expectedError: true,
+        expectedCards: [],
+      },
+      {
+        caso: 'queda solo 1 seleccionado (equilibrado) -> muestra mensaje de validación y oculta tarjetas',
+        toToggle: ['ahorro'],
+        expectedChecked: ['equilibrado'],
+        expectedError: true,
+        expectedCards: [],
+      },
+      {
+        caso: 'queda solo 1 seleccionado (premium) -> muestra mensaje de validación y oculta tarjetas',
+        toToggle: ['ahorro', 'equilibrado', 'premium'],
+        expectedChecked: ['premium'],
+        expectedError: true,
+        expectedCards: [],
+      },
+      {
+        caso: 'selecciona 2 paquetes (ahorro y premium) -> muestra tarjetas sin error',
+        toToggle: ['equilibrado', 'premium'],
+        expectedChecked: ['ahorro', 'premium'],
+        expectedError: false,
+        expectedCards: ['ahorro', 'premium'],
+      },
+      {
+        caso: 'selecciona 2 paquetes (equilibrado y premium) -> muestra tarjetas sin error',
+        toToggle: ['ahorro', 'premium'],
+        expectedChecked: ['equilibrado', 'premium'],
+        expectedError: false,
+        expectedCards: ['equilibrado', 'premium'],
+      },
+      {
+        caso: 'selecciona los 3 paquetes (ahorro, equilibrado y premium) -> muestra las 3 tarjetas sin error',
+        toToggle: ['premium'],
+        expectedChecked: ['ahorro', 'equilibrado', 'premium'],
+        expectedError: false,
+        expectedCards: ['ahorro', 'equilibrado', 'premium'],
+      },
+    ])(
+      'combinación: $caso',
+      async ({ toToggle, expectedChecked, expectedError, expectedCards }) => {
+        const root = await renderScreen({
+          budgetCop: 10_000_000,
+          eventType: 'boda',
+          guests: 100,
+          packages: samplePackages,
+        });
+        const c = root.container;
+
+        for (const mod of toToggle) {
+          await act(async () => {
+            press(find(c, `checkbox-${mod}`));
+          });
+        }
+
+        for (const mod of ['ahorro', 'equilibrado', 'premium'] as const) {
+          const isExpected = expectedChecked.includes(mod);
+          expect(find(c, `checkbox-${mod}`).props.accessibilityState).toEqual({
+            checked: isExpected,
+          });
+        }
+
+        expect(has(c, 'compare-validation-error')).toBe(expectedError);
+        if (expectedError) {
+          expect(textOf(find(c, 'compare-validation-error'))).toBe(
+            'Seleccione al menos dos paquetes para comparar.',
+          );
+        }
+
+        for (const mod of ['ahorro', 'equilibrado', 'premium'] as const) {
+          const shouldShowCard = expectedCards.includes(mod);
+          expect(has(c, `compare-card-${mod}`)).toBe(shouldShowCard);
+        }
+      },
+    );
+  });
+
+  describe('Coincidencia exacta de datos con el detalle de cada paquete (criterios 2.2, 3.2, 3.3, 4)', () => {
+    it.each(samplePackages)(
+      'paquete $modality coincide exactamente en total, restante y desglose por rubro',
+      async (pkg) => {
+        const root = await renderScreen({
+          budgetCop: 10_000_000,
+          eventType: 'boda',
+          guests: 100,
+          packages: samplePackages,
+        });
+        const c = root.container;
+
+        // Aseguramos que la modalidad esté seleccionada
+        if (!find(c, `checkbox-${pkg.modality}`).props.accessibilityState.checked) {
+          await act(async () => {
+            press(find(c, `checkbox-${pkg.modality}`));
+          });
+        }
+
+        const card = find(c, `compare-card-${pkg.modality}`);
+        expect(textOf(find(card, `compare-total-${pkg.modality}`))).toBe(
+          formatCOP(pkg.total_cop),
+        );
+        expect(textOf(find(card, `compare-remaining-${pkg.modality}`))).toBe(
+          formatCOP(pkg.remaining_cop),
+        );
+
+        // Verificación de invariantes numéricas del paquete (Criterio 3.2, RN-01, RN-05)
+        const subtotalSum = pkg.breakdown.reduce((sum, b) => sum + b.subtotal_cop, 0);
+        expect(subtotalSum).toBe(pkg.total_cop);
+        expect(pkg.remaining_cop).toBe(10_000_000 - pkg.total_cop);
+
+        // Verificación de cada rubro e ítem incluido
+        for (const line of pkg.breakdown) {
+          const itemCostSum = line.items.reduce((sum, i) => sum + i.cost_cop, 0);
+          expect(itemCostSum).toBe(line.subtotal_cop);
+
+          expect(textOf(card)).toContain(formatCOP(line.subtotal_cop));
+          for (const item of line.items) {
+            expect(textOf(card)).toContain(item.name);
+            expect(textOf(card)).toContain(item.provider_name);
+            expect(textOf(card)).toContain(formatCOP(item.cost_cop));
+            expect(textOf(card)).toContain(
+              item.verification_status === 'verificado' ? 'Verificado' : 'En revisión',
+            );
+          }
+        }
+      },
+    );
+  });
+
+  describe('Paso a Mi evento al presionar Elegir este paquete (criterios 2.3, 5, RN-21)', () => {
+    it.each(samplePackages)(
+      'elegir modalidad $modality sustituye carrito previo y guarda cartOrigin y chosenModality',
+      async (pkg) => {
+        // Inicializamos con un carrito previo arbitrario
+        const priorCart = [
+          {
+            service_id: 'svc-previo',
+            name: 'Servicio previo',
+            category: 'espacio' as const,
+            provider_id: 'prv-prev',
+            provider_name: 'Proveedor previo',
+            price_model: 'fijo' as const,
+            unit_price_cop: 1_000_000,
+            min_guests: 10,
+            max_guests: 100,
+          },
+        ];
+
+        const root = await renderScreen({
+          budgetCop: 10_000_000,
+          eventType: 'boda',
+          guests: 100,
+          packages: samplePackages,
+          cart: priorCart,
+          cartOrigin: 'personalizado',
+        });
+        const c = root.container;
+
+        // Si no está seleccionada la casilla de esta modalidad, activarla
+        if (!find(c, `checkbox-${pkg.modality}`).props.accessibilityState.checked) {
+          await act(async () => {
+            press(find(c, `checkbox-${pkg.modality}`));
+          });
+        }
+
+        await act(async () => {
+          press(find(c, `choose-package-${pkg.modality}`));
+        });
+
+        const flowSnap = snapshot(c);
+        const expectedServices = packageToCartServices(pkg);
+
+        expect(flowSnap.chosenModality).toBe(pkg.modality);
+        expect(flowSnap.cartOrigin).toBe(pkg.modality);
+        expect(flowSnap.chosenServiceIds).toEqual(expectedServices.map((s) => s.service_id));
+        expect(flowSnap.cart).toEqual(expectedServices);
+        expect(mockNavigate).toHaveBeenCalledWith('Tabs', { screen: 'MiEvento' });
+      },
+    );
+  });
+
+  describe('Casos límite de presupuesto y no mutación de datos (criterio 4)', () => {
+    it('paquete con total exactamente igual al presupuesto (restante $0) se muestra y es elegible', async () => {
+      const exactPackage: Package = {
+        modality: 'premium',
+        total_cop: 8_000_000,
+        remaining_cop: 0,
+        breakdown: [
+          {
+            category: 'espacio',
+            subtotal_cop: 8_000_000,
+            items: [
+              {
+                service_id: 'svc-exact',
+                name: 'Salón Premium',
+                provider_id: 'prv-1',
+                provider_name: 'Salones Cali',
+                verification_status: 'verificado',
+                cost_cop: 8_000_000,
+              },
+            ],
+          },
+        ],
+      };
+
+      const root = await renderScreen({
+        budgetCop: 8_000_000,
+        eventType: 'boda',
+        guests: 100,
+        packages: [samplePackages[0], exactPackage],
+      });
+      const c = root.container;
+
+      expect(has(c, 'checkbox-ahorro')).toBe(true);
+      expect(has(c, 'checkbox-premium')).toBe(true);
+      expect(has(c, 'compare-card-premium')).toBe(true);
+      expect(textOf(find(c, 'compare-total-premium'))).toBe('$8.000.000');
+      expect(textOf(find(c, 'compare-remaining-premium'))).toBe('$0');
+    });
+
+    it('paquete que supera el presupuesto por 1 COP se excluye de la comparación', async () => {
+      const overByOne: Package = {
+        modality: 'equilibrado',
+        total_cop: 8_000_001,
+        remaining_cop: -1,
+        breakdown: [],
+      };
+
+      const root = await renderScreen({
+        budgetCop: 8_000_000,
+        eventType: 'boda',
+        guests: 100,
+        packages: [samplePackages[0], overByOne],
+      });
+      const c = root.container;
+
+      expect(has(c, 'checkbox-ahorro')).toBe(true);
+      expect(has(c, 'checkbox-equilibrado')).toBe(false);
+      expect(has(c, 'compare-validation-error')).toBe(true);
+    });
+
+    it('sin presupuesto (null) todos los paquetes son elegibles (RN-22)', async () => {
+      const root = await renderScreen({
+        budgetCop: null,
+        eventType: 'boda',
+        guests: 100,
+        packages: samplePackages,
+      });
+      const c = root.container;
+
+      expect(has(c, 'checkbox-ahorro')).toBe(true);
+      expect(has(c, 'checkbox-equilibrado')).toBe(true);
+      expect(has(c, 'checkbox-premium')).toBe(true);
+      expect(has(c, 'compare-card-ahorro')).toBe(true);
+      expect(has(c, 'compare-card-equilibrado')).toBe(true);
+    });
+
+    it('los paquetes en FlowState no sufren mutación alguna tras interactuar con la pantalla', async () => {
+      const originalCopy = JSON.parse(JSON.stringify(samplePackages));
+      const root = await renderScreen({
+        budgetCop: 10_000_000,
+        eventType: 'boda',
+        guests: 100,
+        packages: samplePackages,
+      });
+      const c = root.container;
+
+      // Realizamos múltiples interacciones
+      await act(async () => {
+        press(find(c, 'checkbox-premium'));
+      });
+      await act(async () => {
+        press(find(c, 'checkbox-ahorro'));
+      });
+      await act(async () => {
+        press(find(c, 'choose-package-equilibrado'));
+      });
+
+      // FlowState.packages no debe haber sido mutado
+      expect(snapshot(c).packages).toEqual(originalCopy);
+    });
   });
 });
