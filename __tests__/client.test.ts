@@ -1,6 +1,13 @@
 import { ApiError, apiFetch, GENERIC_ERROR, NetworkError } from '../src/api/client';
-import { getCatalog, getHome, getProviders, postQuote, postRecommendations } from '../src/api/endpoints';
-import type { CatalogItem, HomeResponse, ProvidersResponse, Quote } from '../src/api/types';
+import {
+  getCatalog,
+  getHome,
+  getProvider,
+  getProviders,
+  postQuote,
+  postRecommendations,
+} from '../src/api/endpoints';
+import type { CatalogItem, HomeResponse, Provider, ProvidersResponse, Quote } from '../src/api/types';
 import { REQUEST_TIMEOUT_MS, SLOW_NOTICE_MS } from '../src/config/limits';
 
 jest.mock('../src/config/env', () => ({ API_BASE_URL: 'https://api.ejemplo.test' }));
@@ -423,5 +430,91 @@ describe('postQuote y getCatalog (HU_EU_02_06 — T_HU_EU_02_06_3)', () => {
     expect(calledUrl).toContain('category=espacio');
     expect(calledUrl).toContain('event_type=boda');
     expect(calledUrl).toContain('guests=100');
+  });
+});
+
+describe('getProvider (HU_EU_02_08 — T_HU_EU_02_08_3)', () => {
+  afterEach(() => jest.resetAllMocks());
+
+  const mockProvider: Provider = {
+    id: 'prv-hacienda-real',
+    name: 'Hacienda Real',
+    categories: ['espacio'],
+    description: 'Hacienda campestre para eventos exclusivos.',
+    neighborhood: 'Pance',
+    municipality: 'Cali',
+    phone: '3151234567',
+    email: 'contacto@haciendareal.com',
+    latitude: 3.32,
+    longitude: -76.53,
+    images: [{ url: 'https://example.com/hacienda.jpg', alt_text: 'Vista principal' }],
+    rating_avg: 4.8,
+    rating_count: 24,
+    reviews: [],
+    verification: {
+      status: 'verificado',
+      checks: [{ type: 'Cámara de Comercio', date: '2026-01-10' }],
+    },
+    services: [
+      {
+        id: 'svc-salon-principal',
+        name: 'Salón Principal',
+        category: 'espacio',
+        provider_id: 'prv-hacienda-real',
+        provider_name: 'Hacienda Real',
+        price_cop: 4_000_000,
+        price_model: 'fijo',
+        level: 'premium',
+        min_guests: 50,
+        max_guests: 300,
+      },
+    ],
+  };
+
+  it('consulta GET /api/v1/providers/{id} y devuelve los datos completos del proveedor (criterios 1, 2.1 a 2.7)', async () => {
+    g.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => mockProvider });
+
+    const res = await getProvider('prv-hacienda-real');
+
+    expect(res).toEqual(mockProvider);
+    expect(g.fetch).toHaveBeenCalledWith(
+      'https://api.ejemplo.test/api/v1/providers/prv-hacienda-real',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('propaga ApiError con status 404 si el proveedor no existe (criterio 6)', async () => {
+    g.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({
+        error: { code: 'NOT_FOUND', message: 'No encontramos este proveedor.' },
+      }),
+    });
+
+    await expect(getProvider('prv-inexistente')).rejects.toMatchObject({
+      status: 404,
+      code: 'NOT_FOUND',
+    });
+  });
+
+  it('propaga NetworkError ante fallos de conexión (criterio 6, HU_EU_01_04)', async () => {
+    g.fetch = jest.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+    await expect(getProvider('prv-hacienda-real')).rejects.toBeInstanceOf(NetworkError);
+  });
+
+  it('propaga ApiError con mensaje genérico si el servidor responde 500 (criterio 6)', async () => {
+    g.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({
+        error: { code: 'INTERNAL_ERROR', message: 'Database crash' },
+      }),
+    });
+
+    await expect(getProvider('prv-hacienda-real')).rejects.toMatchObject({
+      status: 500,
+      message: GENERIC_ERROR,
+    });
   });
 });
