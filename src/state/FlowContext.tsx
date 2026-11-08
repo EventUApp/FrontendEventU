@@ -1,5 +1,13 @@
 import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
-import type { CartService, Customer, EventType, Modality, Package, ProvidersQuery } from '../api/types';
+import type {
+  CartService,
+  Customer,
+  EventType,
+  Modality,
+  Package,
+  PaymentResponse,
+  ProvidersQuery,
+} from '../api/types';
 import {
   addToCart as addToCartUtil,
   ineligibleAfterGuestsChange,
@@ -24,6 +32,9 @@ export interface FlowState {
   customer: Customer | null;
   eventDate: string | null;
   reservationCode: string | null;
+  reservationTotalCop: number | null;
+  /** Resultado del último pago simulado (HU_EU_03_10). No guarda datos de tarjeta (RN-09). */
+  lastPayment: PaymentResponse['payment'] | null;
 }
 
 export const initialFlow: FlowState = {
@@ -39,6 +50,8 @@ export const initialFlow: FlowState = {
   customer: null,
   eventDate: null,
   reservationCode: null,
+  reservationTotalCop: null,
+  lastPayment: null,
 };
 
 export interface FlowContextValue {

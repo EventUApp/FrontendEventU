@@ -7,10 +7,13 @@ import {
   postQuote,
   postRecommendations,
   postReservation,
+  postPayment,
 } from '../src/api/endpoints';
 import type {
   CatalogItem,
   HomeResponse,
+  PaymentRequest,
+  PaymentResponse,
   Provider,
   ProvidersResponse,
   Quote,
@@ -766,5 +769,165 @@ describe('postReservation (HU_EU_03_09, ADR-09, SAD §7.1)', () => {
     }
   });
 });
+
+describe('postPayment (HU_EU_03_10, ADR-05, SAD §7.1)', () => {
+  afterEach(() => jest.resetAllMocks());
+
+  const samplePaymentReq: PaymentRequest = {
+    reservation_code: 'EU-8K9M2P',
+    card: {
+      number: '4242424242424242',
+      expiry: '12/28',
+      cvv: '123',
+    },
+  };
+
+  const sampleApprovedResponse: PaymentResponse = {
+    payment: {
+      status: 'aprobado',
+      reference: 'SIM-PAY-987654',
+      amount_cop: 4_500_000,
+    },
+    reservation_status: 'pagada',
+  };
+
+  const sampleDeclinedResponse: PaymentResponse = {
+    payment: {
+      status: 'rechazado',
+      reference: 'SIM-PAY-DECLINED-001',
+      amount_cop: 4_500_000,
+    },
+    reservation_status: 'pago_rechazado',
+  };
+
+  it('procesa pago con tarjeta aprobada y devuelve 200 con pago aprobado y reserva pagada (criterio 5, RF-PAG-03)', async () => {
+    g.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => sampleApprovedResponse,
+    });
+
+    const res = await postPayment(samplePaymentReq);
+
+    expect(g.fetch).toHaveBeenCalledTimes(1);
+    const [url, init] = g.fetch.mock.calls[0];
+    expect(url).toBe('https://api.ejemplo.test/api/v1/payments');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toEqual(samplePaymentReq);
+    expect(res.payment.status).toBe('aprobado');
+    expect(res.reservation_status).toBe('pagada');
+    expect(res.payment.amount_cop).toBe(4_500_000);
+    expect(res.payment.reference).toBe('SIM-PAY-987654');
+  });
+
+  it('un pago rechazado es un resultado de negocio y devuelve HTTP 200 con status rechazado (criterio 6, SAD §7.1, RF-PAG-04)', async () => {
+    g.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => sampleDeclinedResponse,
+    });
+
+    const declinedReq: PaymentRequest = {
+      ...samplePaymentReq,
+      card: { ...samplePaymentReq.card, number: '4000000000000002' },
+    };
+
+    const res = await postPayment(declinedReq);
+
+    expect(res.payment.status).toBe('rechazado');
+    expect(res.reservation_status).toBe('pago_rechazado');
+  });
+
+  it('propaga ApiError 409 ALREADY_PAID cuando la reserva ya está pagada (criterio 4, SAD §5.4, RF-PAG-08)', async () => {
+    g.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        error: {
+          code: 'ALREADY_PAID',
+          message: 'La reserva ya fue pagada.',
+        },
+      }),
+    });
+
+    await expect(postPayment(samplePaymentReq)).rejects.toMatchObject({
+      status: 409,
+      code: 'ALREADY_PAID',
+    });
+  });
+
+  it('propaga ApiError 404 NOT_FOUND cuando la reserva no existe (criterio 1, SAD §7.1)', async () => {
+    g.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({
+        error: {
+          code: 'NOT_FOUND',
+          message: 'No encontramos la reserva especificada.',
+        },
+      }),
+    });
+
+    await expect(
+      postPayment({ ...samplePaymentReq, reservation_code: 'EU-NONEXIST' }),
+    ).rejects.toMatchObject({
+      status: 404,
+      code: 'NOT_FOUND',
+    });
+  });
+
+  it('propaga ApiError 422 VALIDATION_ERROR si los datos de la tarjeta son inválidos (criterio 3)', async () => {
+    g.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: async () => ({
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Revise los datos ingresados.',
+          fields: {
+            'card.number': 'El número de tarjeta debe tener 16 dígitos.',
+          },
+        },
+      }),
+    });
+
+    await expect(
+      postPayment({
+        reservation_code: 'EU-8K9M2P',
+        card: { number: '123', expiry: '12/28', cvv: '123' },
+      }),
+    ).rejects.toMatchObject({
+      status: 422,
+      code: 'VALIDATION_ERROR',
+      fields: {
+        'card.number': 'El número de tarjeta debe tener 16 dígitos.',
+      },
+    });
+  });
+
+  it('propaga NetworkError ante fallos de conexión (criterio 6, HU_EU_01_04)', async () => {
+    g.fetch = jest.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+    await expect(postPayment(samplePaymentReq)).rejects.toBeInstanceOf(NetworkError);
+  });
+
+  it('propaga ApiError con mensaje genérico si el servidor responde 500 (criterio 6, SAD §7.3)', async () => {
+    g.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Gateway connection timed out in backend',
+        },
+      }),
+    });
+
+    await expect(postPayment(samplePaymentReq)).rejects.toMatchObject({
+      status: 500,
+      message: GENERIC_ERROR,
+    });
+  });
+});
+
 
 
