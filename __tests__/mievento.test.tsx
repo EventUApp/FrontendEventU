@@ -6,7 +6,16 @@ import * as endpoints from '../src/api/endpoints';
 import type { CartService, CatalogItem, Package, Quote } from '../src/api/types';
 import MiEventoScreen from '../src/screens/MiEventoScreen';
 import { FlowProvider, useFlow, type FlowState } from '../src/state/FlowContext';
-import { canRemove, remainingBudget, replaceService } from '../src/utils/cart';
+import {
+  canRemove,
+  CONTINUE_TO_RESERVE_TEXT,
+  EMPTY_CART_ACTION_TEXT,
+  EMPTY_CART_MESSAGE,
+  INELIGIBLE_GUESTS_MESSAGE,
+  MISSING_CATEGORIES_MESSAGE,
+  remainingBudget,
+  replaceService,
+} from '../src/utils/cart';
 
 function textOf(node: TestInstance): string {
   return node.children.map((c) => (typeof c === 'string' ? c : textOf(c))).join('');
@@ -79,7 +88,13 @@ function quoteFor(total: number, budget: number | null): Quote {
   return { total_cop: total, remaining_cop: budget === null ? null : budget - total, breakdown: [], missing_categories: [], ineligible: [] };
 }
 
-function Harness({ initial }: { initial: Partial<FlowState> }) {
+function Harness({
+  initial,
+  navigation,
+}: {
+  initial: Partial<FlowState>;
+  navigation?: any;
+}) {
   const { flow, update } = useFlow();
   const [mounted, setMounted] = React.useState(false);
   return (
@@ -93,19 +108,19 @@ function Harness({ initial }: { initial: Partial<FlowState> }) {
           }}
         />
       ) : (
-        <MiEventoScreen />
+        <MiEventoScreen navigation={navigation} />
       )}
       <Text testID="flow-snapshot">{JSON.stringify(flow)}</Text>
     </>
   );
 }
 
-async function mount(initial: Partial<FlowState>) {
+async function mount(initial: Partial<FlowState>, navigation?: any) {
   const root = createRoot();
   await act(async () => {
     root.render(
       <FlowProvider>
-        <Harness initial={initial} />
+        <Harness initial={initial} navigation={navigation} />
       </FlowProvider>,
     );
   });
@@ -479,5 +494,148 @@ describe('MiEventoScreen: recálculo, casos límite del presupuesto, presupuesto
     expect(has(c, 'alt-ali-max-bajo')).toBe(false);
     expect(has(c, 'alt-ali-exacto')).toBe(true);
     expect(textOf(find(c, 'alt-ali-exacto'))).toContain('$1.750.000');
+  });
+});
+
+describe('HU_EU_02_13 — T_HU_EU_02_13_2: Pantalla Mi evento (secciones, datos editables, avisos y reserva)', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('estado vacío: muestra texto literal y botón Ir al inicio que navega a Inicio (criterio 6)', async () => {
+    const mockNavigate = jest.fn();
+    const root = await mount({}, { navigate: mockNavigate });
+    const c = root.container;
+
+    expect(has(c, 'cart-empty')).toBe(true);
+    expect(textOf(find(c, 'cart-empty'))).toBe(EMPTY_CART_MESSAGE);
+    expect(textOf(find(c, 'cart-empty'))).toBe('Aún no ha agregado servicios.');
+
+    expect(has(c, 'btn-go-to-inicio')).toBe(true);
+    expect(textOf(find(c, 'btn-go-to-inicio'))).toBe(EMPTY_CART_ACTION_TEXT);
+    expect(textOf(find(c, 'btn-go-to-inicio'))).toBe('Ir al inicio');
+
+    await act(async () => void press(find(c, 'btn-go-to-inicio')));
+    expect(mockNavigate).toHaveBeenCalledWith('Tabs', { screen: 'Inicio' });
+  });
+
+  it('permite editar tipo de evento, invitados, fecha y presupuesto opcional (criterios 2.3 y 2.4)', async () => {
+    const root = await mount(BASE);
+    const c = root.container;
+
+    expect(has(c, 'event-data-section')).toBe(true);
+    expect(has(c, 'option-event-type-cumpleanos')).toBe(true);
+    expect(has(c, 'option-event-type-boda')).toBe(true);
+    expect(has(c, 'option-event-type-xv')).toBe(true);
+
+    // Cambiar tipo de evento a cumpleanos
+    await act(async () => void press(find(c, 'option-event-type-cumpleanos')));
+    expect(snapshot(c).eventType).toBe('cumpleanos');
+
+    // Cambiar tipo de evento a xv
+    await act(async () => void press(find(c, 'option-event-type-xv')));
+    expect(snapshot(c).eventType).toBe('xv');
+
+    // Editar invitados
+    await act(async () => {
+      find(c, 'input-guests').props.onChangeText('140');
+    });
+    expect(snapshot(c).guests).toBe(140);
+
+    // Editar fecha
+    await act(async () => {
+      find(c, 'input-event-date').props.onChangeText('2027-11-20');
+    });
+    expect(snapshot(c).eventDate).toBe('2027-11-20');
+
+    // Editar presupuesto opcional
+    await act(async () => {
+      find(c, 'input-budget').props.onChangeText('6000000');
+    });
+    expect(snapshot(c).budgetCop).toBe(6_000_000);
+    // Presupuesto restante recalculado con nuevo presupuesto (6.000.000 - 3.800.000 = 2.200.000)
+    expect(textOf(find(c, 'cart-remaining'))).toBe('$2.200.000');
+  });
+
+  it('revalida cada servicio y avisa de los que dejan de ser elegibles al cambiar los invitados (criterio 3.4)', async () => {
+    // Carrito donde un espacio admite hasta 80 invitados
+    const limitedCart: CartService[] = [
+      {
+        ...svc('esp-lim', 'espacio', 1_000_000),
+        name: 'Salón Pequeño',
+        min_guests: 10,
+        max_guests: 80,
+      },
+      svc('ali', 'alimentacion', 2_000_000),
+      svc('dec', 'decoracion', 500_000),
+    ];
+
+    const root = await mount({
+      cart: limitedCart,
+      eventType: 'boda',
+      guests: 50,
+      budgetCop: null,
+    });
+    const c = root.container;
+
+    // Con 50 invitados, todos admiten (ningún aviso de inelegibles)
+    expect(has(c, 'ineligible-services-notice')).toBe(false);
+    expect(has(c, 'ineligible-badge-esp-lim')).toBe(false);
+
+    // Cambiar a 100 invitados: Salón Pequeño deja de ser elegible (max 80 < 100)
+    await act(async () => {
+      find(c, 'input-guests').props.onChangeText('100');
+    });
+
+    expect(has(c, 'ineligible-services-notice')).toBe(true);
+    expect(textOf(find(c, 'ineligible-services-notice'))).toContain('Salón Pequeño');
+    expect(has(c, 'ineligible-badge-esp-lim')).toBe(true);
+    expect(textOf(find(c, 'ineligible-badge-esp-lim'))).toBe(INELIGIBLE_GUESTS_MESSAGE);
+    expect(textOf(find(c, 'ineligible-badge-esp-lim'))).toBe(
+      'Este servicio no admite ese número de invitados.',
+    );
+  });
+
+  it('muestra aviso de rubros faltantes cuando faltan espacio, alimentación o decoración y bloquea reserva (criterio 3.3)', async () => {
+    const mockNavigate = jest.fn();
+    // Carrito incompleto: solo espacio y alimentación (falta decoración)
+    const incompleteCart: CartService[] = [
+      svc('esp', 'espacio', 1_000_000),
+      svc('ali', 'alimentacion', 2_000_000),
+    ];
+
+    const root = await mount(
+      {
+        cart: incompleteCart,
+        eventType: 'boda',
+        guests: 50,
+        budgetCop: null,
+      },
+      { navigate: mockNavigate },
+    );
+    const c = root.container;
+
+    // Aviso visible con el texto literal
+    expect(has(c, 'missing-categories-notice')).toBe(true);
+    expect(textOf(find(c, 'missing-categories-notice'))).toBe(MISSING_CATEGORIES_MESSAGE);
+    expect(textOf(find(c, 'missing-categories-notice'))).toBe(
+      'Agregue espacio, alimentación y decoración para reservar.',
+    );
+
+    // Al pulsar Continuar a reservar, NO navega porque faltan rubros obligatorios
+    await act(async () => void press(find(c, 'btn-continue-to-reserve')));
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('Continuar a reservar con todos los rubros obligatorios y servicios elegibles abre Datos del cliente (criterios 2.5 y 5)', async () => {
+    const mockNavigate = jest.fn();
+    const root = await mount(BASE, { navigate: mockNavigate });
+    const c = root.container;
+
+    expect(has(c, 'missing-categories-notice')).toBe(false);
+    expect(has(c, 'btn-continue-to-reserve')).toBe(true);
+    expect(textOf(find(c, 'btn-continue-to-reserve'))).toBe(CONTINUE_TO_RESERVE_TEXT);
+    expect(textOf(find(c, 'btn-continue-to-reserve'))).toBe('Continuar a reservar');
+
+    await act(async () => void press(find(c, 'btn-continue-to-reserve')));
+    expect(mockNavigate).toHaveBeenCalledWith('DatosCliente');
   });
 });
