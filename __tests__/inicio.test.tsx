@@ -517,6 +517,12 @@ describe('InicioScreen (HU_EU_01_12 — T_HU_EU_01_12_1)', () => {
 
   it('ofrece las 4 pestañas inferiores (Inicio, Resultados, Mi evento, Reservas) y conserva los datos ingresados al cambiar entre pestañas (T_HU_EU_01_12_3, criterios 1, 2.6 y 4)', async () => {
     jest.spyOn(endpoints, 'getHome').mockResolvedValue(SAMPLE_HOME);
+    jest.spyOn(endpoints, 'getProviders').mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      page_size: 10,
+    });
 
     const root = createRoot();
     await act(async () => {
