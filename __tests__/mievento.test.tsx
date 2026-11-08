@@ -638,4 +638,186 @@ describe('HU_EU_02_13 — T_HU_EU_02_13_2: Pantalla Mi evento (secciones, datos 
     await act(async () => void press(find(c, 'btn-continue-to-reserve')));
     expect(mockNavigate).toHaveBeenCalledWith('DatosCliente');
   });
+
+  describe('T_HU_EU_02_13_3: Pruebas de integración de reglas de negocio en MiEventoScreen', () => {
+    describe('Regla RN-03 / Criterio 3.3: Mínimo para reservar en pantalla', () => {
+      it.each([
+        {
+          items: [svc('esp', 'espacio', 1_000_000)],
+          desc: 'solo espacio',
+          missingLabel: 'Alimentación, Decoración',
+        },
+        {
+          items: [svc('esp', 'espacio', 1_000_000), svc('ali', 'alimentacion', 2_000_000)],
+          desc: 'espacio y alimentación (falta decoración)',
+          missingLabel: 'Decoración',
+        },
+        {
+          items: [svc('esp', 'espacio', 1_000_000), svc('dec', 'decoracion', 500_000)],
+          desc: 'espacio y decoración (falta alimentación)',
+          missingLabel: 'Alimentación',
+        },
+        {
+          items: [svc('ali', 'alimentacion', 2_000_000), svc('dec', 'decoracion', 500_000)],
+          desc: 'alimentación y decoración (falta espacio)',
+          missingLabel: 'Espacio',
+        },
+      ])('bloquea reserva y muestra rubros faltantes cuando falta algún obligatorio: $desc', async ({ items, missingLabel }) => {
+        const mockNavigate = jest.fn();
+        const root = await mount(
+          { cart: items, eventType: 'boda', guests: 50, budgetCop: null },
+          { navigate: mockNavigate },
+        );
+        const c = root.container;
+
+        expect(has(c, 'missing-categories-notice')).toBe(true);
+        expect(textOf(find(c, 'missing-categories-notice'))).toBe(MISSING_CATEGORIES_MESSAGE);
+        expect(findAllText(c).join(' ')).toContain(`Rubros pendientes: ${missingLabel}`);
+
+        // Continuar a reservar no debe navegar
+        await act(async () => void press(find(c, 'btn-continue-to-reserve')));
+        expect(mockNavigate).not.toHaveBeenCalled();
+      });
+
+      it('al quitar entretenimiento el carrito conserva los 3 obligatorios y permite reservar (3.2 y 3.3)', async () => {
+        jest.spyOn(endpoints, 'postQuote').mockResolvedValue(quoteFor(3_500_000, 4_000_000));
+        const mockNavigate = jest.fn();
+        const root = await mount(BASE, { navigate: mockNavigate });
+        const c = root.container;
+
+        expect(has(c, 'btn-remove-ent')).toBe(true);
+        expect(has(c, 'missing-categories-notice')).toBe(false);
+
+        // Quitar entretenimiento
+        await act(async () => void press(find(c, 'btn-remove-ent')));
+
+        // Carrito conserva espacio, alimentación y decoración
+        expect(has(c, 'cart-item-ent')).toBe(false);
+        expect(has(c, 'missing-categories-notice')).toBe(false);
+
+        // Puede reservar exitosamente
+        await act(async () => void press(find(c, 'btn-continue-to-reserve')));
+        expect(mockNavigate).toHaveBeenCalledWith('DatosCliente');
+      });
+    });
+
+    describe('Regla RN-14 / Criterio 3.4: Revalidación dinámica por cambio de invitados y bloqueo de reserva', () => {
+      it('detecta servicios inelegibles al cambiar invitados, muestra avisos y bloquea la reserva hasta corregir', async () => {
+        const customCart: CartService[] = [
+          {
+            ...svc('esp-intimo', 'espacio', 1_500_000),
+            name: 'Salón Íntimo',
+            min_guests: 20,
+            max_guests: 70,
+          },
+          {
+            ...svc('ali-clasico', 'alimentacion', 2_000_000),
+            name: 'Banquete Clásico',
+            min_guests: 10,
+            max_guests: 120,
+          },
+          {
+            ...svc('dec-floral', 'decoracion', 600_000),
+            name: 'Decoración Floral',
+            min_guests: 5,
+            max_guests: 200,
+          },
+        ];
+
+        const mockNavigate = jest.fn();
+        const root = await mount(
+          {
+            cart: customCart,
+            eventType: 'boda',
+            guests: 50,
+            budgetCop: null,
+          },
+          { navigate: mockNavigate },
+        );
+        const c = root.container;
+
+        // Con 50 invitados todos son elegibles
+        expect(has(c, 'ineligible-services-notice')).toBe(false);
+        expect(has(c, 'ineligible-badge-esp-intimo')).toBe(false);
+        expect(has(c, 'ineligible-badge-ali-clasico')).toBe(false);
+
+        // 1. Aumentar a 90 invitados: Salón Íntimo (max 70) deja de ser elegible
+        await act(async () => {
+          find(c, 'input-guests').props.onChangeText('90');
+        });
+
+        expect(has(c, 'ineligible-services-notice')).toBe(true);
+        expect(textOf(find(c, 'ineligible-services-notice'))).toContain('Salón Íntimo');
+        expect(has(c, 'ineligible-badge-esp-intimo')).toBe(true);
+        expect(textOf(find(c, 'ineligible-badge-esp-intimo'))).toBe(INELIGIBLE_GUESTS_MESSAGE);
+        expect(has(c, 'ineligible-badge-ali-clasico')).toBe(false);
+
+        // Intentar reservar mientras hay servicio inelegible debe estar bloqueado
+        await act(async () => void press(find(c, 'btn-continue-to-reserve')));
+        expect(mockNavigate).not.toHaveBeenCalled();
+
+        // 2. Aumentar a 150 invitados: Salón Íntimo (max 70) y Banquete Clásico (max 120) son inelegibles
+        await act(async () => {
+          find(c, 'input-guests').props.onChangeText('150');
+        });
+
+        expect(has(c, 'ineligible-services-notice')).toBe(true);
+        const noticeText = textOf(find(c, 'ineligible-services-notice'));
+        expect(noticeText).toContain('Salón Íntimo');
+        expect(noticeText).toContain('Banquete Clásico');
+        expect(has(c, 'ineligible-badge-esp-intimo')).toBe(true);
+        expect(has(c, 'ineligible-badge-ali-clasico')).toBe(true);
+
+        await act(async () => void press(find(c, 'btn-continue-to-reserve')));
+        expect(mockNavigate).not.toHaveBeenCalled();
+
+        // 3. Corregir invitados a 60 (dentro de [20, 70], [10, 120], [5, 200])
+        await act(async () => {
+          find(c, 'input-guests').props.onChangeText('60');
+        });
+
+        expect(has(c, 'ineligible-services-notice')).toBe(false);
+        expect(has(c, 'ineligible-badge-esp-intimo')).toBe(false);
+        expect(has(c, 'ineligible-badge-ali-clasico')).toBe(false);
+
+        // Ahora la reserva procede normalmente hacia Datos del cliente
+        await act(async () => void press(find(c, 'btn-continue-to-reserve')));
+        expect(mockNavigate).toHaveBeenCalledWith('DatosCliente');
+      });
+    });
+
+    describe('Regla RN-22: Presupuesto opcional en MiEventoScreen', () => {
+      it('sin presupuesto no muestra restante; al escribir presupuesto muestra el restante y al borrarlo lo oculta', async () => {
+        const root = await mount({
+          cart: CART,
+          eventType: 'boda',
+          guests: 100,
+          budgetCop: null,
+        });
+        const c = root.container;
+
+        // Inicialmente sin presupuesto: no hay restante
+        expect(has(c, 'cart-remaining')).toBe(false);
+        expect(snapshot(c).budgetCop).toBeNull();
+
+        // Ingresa presupuesto de 5.000.000
+        await act(async () => {
+          find(c, 'input-budget').props.onChangeText('5000000');
+        });
+
+        expect(snapshot(c).budgetCop).toBe(5_000_000);
+        expect(has(c, 'cart-remaining')).toBe(true);
+        // Total es 3.800.000 -> Restante es 1.200.000
+        expect(textOf(find(c, 'cart-remaining'))).toBe('$1.200.000');
+
+        // Borra el presupuesto (cadena vacía)
+        await act(async () => {
+          find(c, 'input-budget').props.onChangeText('');
+        });
+
+        expect(snapshot(c).budgetCop).toBeNull();
+        expect(has(c, 'cart-remaining')).toBe(false);
+      });
+    });
+  });
 });

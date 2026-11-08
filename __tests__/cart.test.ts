@@ -11,6 +11,7 @@ import {
   CONTINUE_TO_RESERVE_TEXT,
   EMPTY_CART_ACTION_TEXT,
   EMPTY_CART_MESSAGE,
+  fitsGuests,
   INELIGIBLE_GUESTS_MESSAGE,
   ineligibleAfterGuestsChange,
   missingCategories,
@@ -465,6 +466,232 @@ describe('HU_EU_02_13 — T_HU_EU_02_13_1: Estado de Mi evento (utils/cart)', ()
 
       // Entretenimiento es opcional pero con los 4 rubros también es válido
       expect(canReserve([espacio, alimentacion, decoracion, entretenimiento])).toBe(true);
+    });
+  });
+
+  describe('HU_EU_02_13 — T_HU_EU_02_13_3: Pruebas exhaustivas de las reglas de negocio (RN-03, RN-14, RN-22, RN-23)', () => {
+    describe('Regla RN-23: Un servicio por rubro y reemplazo exhaustivo en los 4 rubros', () => {
+      it.each<Category>(['espacio', 'alimentacion', 'decoracion', 'entretenimiento'])(
+        'reemplaza correctamente el servicio en el rubro %s y retorna el anterior',
+        (category) => {
+          const item1 = svc({ service_id: `${category}-1`, name: `${category} Original`, category });
+          const item2 = svc({ service_id: `${category}-2`, name: `${category} Nuevo`, category });
+
+          // Partiendo de un carrito con los 4 rubros completos
+          const allFour: CartService[] = [
+            svc({ service_id: 'esp-base', category: 'espacio' }),
+            svc({ service_id: 'ali-base', category: 'alimentacion' }),
+            svc({ service_id: 'dec-base', category: 'decoracion' }),
+            svc({ service_id: 'ent-base', category: 'entretenimiento' }),
+          ].map((s) => (s.category === category ? item1 : s));
+
+          const result = addToCart(allFour, item2);
+
+          // El carrito sigue teniendo exactamente 4 servicios
+          expect(result.cart).toHaveLength(4);
+          // El servicio de la categoría fue reemplazado por item2
+          expect(result.cart.find((s) => s.category === category)?.service_id).toBe(item2.service_id);
+          // El resultado informa exactamente el servicio reemplazado (item1)
+          expect(result.replaced).toEqual(item1);
+          // Los otros 3 servicios permanecen intactos
+          for (const other of allFour.filter((s) => s.category !== category)) {
+            expect(result.cart.find((s) => s.service_id === other.service_id)).toEqual(other);
+          }
+        },
+      );
+
+      it('acumula hasta los 4 rubros y reemplaza secuencialmente sin pérdida de datos ni mutación', () => {
+        const e1 = svc({ service_id: 'e1', category: 'espacio' });
+        const a1 = svc({ service_id: 'a1', category: 'alimentacion' });
+        const d1 = svc({ service_id: 'd1', category: 'decoracion' });
+        const ent1 = svc({ service_id: 'ent1', category: 'entretenimiento' });
+
+        let current: CartService[] = [];
+        const r1 = addToCart(current, e1);
+        expect(r1.replaced).toBeNull();
+        current = r1.cart;
+
+        const r2 = addToCart(current, a1);
+        expect(r2.replaced).toBeNull();
+        current = r2.cart;
+
+        const r3 = addToCart(current, d1);
+        expect(r3.replaced).toBeNull();
+        current = r3.cart;
+
+        const r4 = addToCart(current, ent1);
+        expect(r4.replaced).toBeNull();
+        current = r4.cart;
+
+        expect(current).toHaveLength(4);
+
+        // Ahora reemplazamos cada uno con una versión 2
+        const e2 = svc({ service_id: 'e2', category: 'espacio' });
+        const rE = addToCart(current, e2);
+        expect(rE.replaced?.service_id).toBe('e1');
+        expect(rE.cart).toHaveLength(4);
+        current = rE.cart;
+
+        const a2 = svc({ service_id: 'a2', category: 'alimentacion' });
+        const rA = addToCart(current, a2);
+        expect(rA.replaced?.service_id).toBe('a1');
+        expect(rA.cart).toHaveLength(4);
+        current = rA.cart;
+
+        const d2 = svc({ service_id: 'd2', category: 'decoracion' });
+        const rD = addToCart(current, d2);
+        expect(rD.replaced?.service_id).toBe('d1');
+        expect(rD.cart).toHaveLength(4);
+        current = rD.cart;
+
+        const ent2 = svc({ service_id: 'ent2', category: 'entretenimiento' });
+        const rEnt = addToCart(current, ent2);
+        expect(rEnt.replaced?.service_id).toBe('ent1');
+        expect(rEnt.cart).toHaveLength(4);
+        current = rEnt.cart;
+
+        expect(current.map((s) => s.service_id)).toEqual(['e2', 'a2', 'd2', 'ent2']);
+      });
+    });
+
+    describe('Regla RN-03: Mínimo para reservar (espacio + alimentación + decoración) — Cobertura combinatoria completa (2^4 = 16 combinaciones)', () => {
+      // Definimos las 16 combinaciones posibles de los 4 rubros
+      const combinations: {
+        hasEspacio: boolean;
+        hasAlimentacion: boolean;
+        hasDecoracion: boolean;
+        hasEntretenimiento: boolean;
+        canReserve: boolean;
+        missing: Category[];
+      }[] = [];
+
+      const bools = [false, true];
+      for (const hasEspacio of bools) {
+        for (const hasAlimentacion of bools) {
+          for (const hasDecoracion of bools) {
+            for (const hasEntretenimiento of bools) {
+              const expectedCanReserve = hasEspacio && hasAlimentacion && hasDecoracion;
+              const expectedMissing: Category[] = [];
+              if (!hasEspacio) expectedMissing.push('espacio');
+              if (!hasAlimentacion) expectedMissing.push('alimentacion');
+              if (!hasDecoracion) expectedMissing.push('decoracion');
+              combinations.push({
+                hasEspacio,
+                hasAlimentacion,
+                hasDecoracion,
+                hasEntretenimiento,
+                canReserve: expectedCanReserve,
+                missing: expectedMissing,
+              });
+            }
+          }
+        }
+      }
+
+      it.each(combinations)(
+        'E:$hasEspacio, A:$hasAlimentacion, D:$hasDecoracion, ENT:$hasEntretenimiento -> canReserve=$canReserve, missing=$missing',
+        ({ hasEspacio, hasAlimentacion, hasDecoracion, hasEntretenimiento, canReserve: expectedCanReserve, missing: expectedMissing }) => {
+          const testCart: CartService[] = [];
+          if (hasEspacio) testCart.push(svc({ service_id: 'e', category: 'espacio' }));
+          if (hasAlimentacion) testCart.push(svc({ service_id: 'a', category: 'alimentacion' }));
+          if (hasDecoracion) testCart.push(svc({ service_id: 'd', category: 'decoracion' }));
+          if (hasEntretenimiento) testCart.push(svc({ service_id: 'ent', category: 'entretenimiento' }));
+
+          expect(canReserve(testCart)).toBe(expectedCanReserve);
+          expect(missingCategories(testCart)).toEqual(expectedMissing);
+        },
+      );
+
+      it('transición de completo a incompleto al quitar y viceversa', () => {
+        const fullCart = [
+          svc({ service_id: 'e', category: 'espacio' }),
+          svc({ service_id: 'a', category: 'alimentacion' }),
+          svc({ service_id: 'd', category: 'decoracion' }),
+          svc({ service_id: 'ent', category: 'entretenimiento' }),
+        ];
+
+        expect(canReserve(fullCart)).toBe(true);
+
+        // Quitar entretenimiento (opcional): sigue pudiendo reservar
+        const withoutEnt = removeFromCart(fullCart, 'ent');
+        expect(canReserve(withoutEnt)).toBe(true);
+        expect(missingCategories(withoutEnt)).toEqual([]);
+
+        // Quitar espacio (obligatorio): ya no puede reservar
+        const withoutEsp = removeFromCart(withoutEnt, 'e');
+        expect(canReserve(withoutEsp)).toBe(false);
+        expect(missingCategories(withoutEsp)).toEqual(['espacio']);
+
+        // Reincorporar espacio: vuelve a ser válido para reservar
+        const restored = addToCart(withoutEsp, svc({ service_id: 'e2', category: 'espacio' })).cart;
+        expect(canReserve(restored)).toBe(true);
+        expect(missingCategories(restored)).toEqual([]);
+      });
+    });
+
+    describe('Regla RN-14 y Criterio 3.2: Capacidad y límites de invitados en bordes exactos', () => {
+      const multiRangeCart: CartService[] = [
+        svc({ service_id: 's-estrecho', name: 'Salón Pequeño', category: 'espacio', min_guests: 30, max_guests: 80 }),
+        svc({ service_id: 's-medio', name: 'Banquete Medio', category: 'alimentacion', min_guests: 50, max_guests: 150 }),
+        svc({ service_id: 's-amplio', name: 'Decoración Amplia', category: 'decoracion', min_guests: 10, max_guests: 300 }),
+      ];
+
+      it.each([
+        { guests: 9, expectedIneligible: ['s-estrecho', 's-medio', 's-amplio'], desc: 'debajo de min de los 3' },
+        { guests: 10, expectedIneligible: ['s-estrecho', 's-medio'], desc: 'borde exacto min de s-amplio' },
+        { guests: 29, expectedIneligible: ['s-estrecho', 's-medio'], desc: '1 debajo de min de s-estrecho' },
+        { guests: 30, expectedIneligible: ['s-medio'], desc: 'borde exacto min de s-estrecho' },
+        { guests: 49, expectedIneligible: ['s-medio'], desc: '1 debajo de min de s-medio' },
+        { guests: 50, expectedIneligible: [], desc: 'borde exacto min de s-medio (los 3 admiten)' },
+        { guests: 80, expectedIneligible: [], desc: 'borde exacto max de s-estrecho (los 3 admiten)' },
+        { guests: 81, expectedIneligible: ['s-estrecho'], desc: '1 por encima del max de s-estrecho' },
+        { guests: 150, expectedIneligible: ['s-estrecho'], desc: 'borde exacto max de s-medio' },
+        { guests: 151, expectedIneligible: ['s-estrecho', 's-medio'], desc: '1 por encima del max de s-medio' },
+        { guests: 300, expectedIneligible: ['s-estrecho', 's-medio'], desc: 'borde exacto max de s-amplio' },
+        { guests: 301, expectedIneligible: ['s-estrecho', 's-medio', 's-amplio'], desc: '1 por encima del max de s-amplio' },
+        { guests: 500, expectedIneligible: ['s-estrecho', 's-medio', 's-amplio'], desc: 'GUESTS_MAX' },
+      ])('$desc ($guests invitados)', ({ guests, expectedIneligible }) => {
+        const ineligible = ineligibleAfterGuestsChange(multiRangeCart, guests);
+        expect(ineligible.map((s) => s.service_id)).toEqual(expectedIneligible);
+      });
+
+      it('fitsGuests responde estrictamente según min_guests <= guests <= max_guests', () => {
+        const item = svc({ min_guests: 20, max_guests: 100 });
+        expect(fitsGuests(item, 19)).toBe(false);
+        expect(fitsGuests(item, 20)).toBe(true);
+        expect(fitsGuests(item, 60)).toBe(true);
+        expect(fitsGuests(item, 100)).toBe(true);
+        expect(fitsGuests(item, 101)).toBe(false);
+      });
+    });
+
+    describe('Regla RN-22: Presupuesto opcional y recálculo dinámico con cambio de invitados', () => {
+      const dynamicCart: CartService[] = [
+        svc({ service_id: 'e', category: 'espacio', price_model: 'fijo', unit_price_cop: 2_000_000 }),
+        svc({ service_id: 'a', category: 'alimentacion', price_model: 'por_invitado', unit_price_cop: 30_000 }),
+        svc({ service_id: 'd', category: 'decoracion', price_model: 'fijo', unit_price_cop: 1_000_000 }),
+      ];
+
+      it('sin presupuesto (null) nunca hay tope ni restricción de gasto (RN-22)', () => {
+        for (const g of [10, 50, 100, 200, 500]) {
+          expect(remainingBudget(dynamicCart, g, null)).toBeNull();
+          expect(withinBudget(dynamicCart, g, null)).toBe(true);
+        }
+      });
+
+      it.each([
+        { guests: 50, expectedCost: 2_000_000 + 30_000 * 50 + 1_000_000, budget: 5_000_000, expectedRemaining: 500_000, within: true },
+        { guests: 66, expectedCost: 2_000_000 + 30_000 * 66 + 1_000_000, budget: 4_980_000, expectedRemaining: 0, within: true },
+        { guests: 67, expectedCost: 2_000_000 + 30_000 * 67 + 1_000_000, budget: 5_000_000, expectedRemaining: -10_000, within: false },
+        { guests: 100, expectedCost: 2_000_000 + 30_000 * 100 + 1_000_000, budget: 6_000_000, expectedRemaining: 0, within: true },
+      ])(
+        'con $guests invitados -> total $expectedCost y presupuesto $budget (within=$within)',
+        ({ guests, expectedCost, budget, expectedRemaining, within }) => {
+          expect(cartTotal(dynamicCart, guests)).toBe(expectedCost);
+          expect(remainingBudget(dynamicCart, guests, budget)).toBe(expectedRemaining);
+          expect(withinBudget(dynamicCart, guests, budget)).toBe(within);
+        },
+      );
     });
   });
 });
