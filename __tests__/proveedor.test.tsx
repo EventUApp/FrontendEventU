@@ -923,4 +923,266 @@ describe('T_HU_EU_02_08_5: Casos de la regla de verificación, proveedor inexist
       expect(has(c, 'btn-upload-photo')).toBe(false);
     });
   });
+
+  describe('T_HU_EU_02_16_5: Pruebas de regla de calificación promedio, orden de reseñas y casos borde sin fotos ni reseñas', () => {
+    interface TabulatedRatingCase {
+      scenario: string;
+      ratings: number[];
+      expectedAvg: number;
+      expectedFormatted: string;
+      expectedCount: number;
+    }
+
+    const TABULATED_RATING_CASES: TabulatedRatingCase[] = [
+      {
+        scenario: 'Promedio con decimal periódico redondeado (5, 5, 4 -> 4.7)',
+        ratings: [5, 5, 4],
+        expectedAvg: 4.7,
+        expectedFormatted: '4.7',
+        expectedCount: 3,
+      },
+      {
+        scenario: 'Promedio entero exacto con un decimal (5, 4, 3 -> 4.0)',
+        ratings: [5, 4, 3],
+        expectedAvg: 4.0,
+        expectedFormatted: '4.0',
+        expectedCount: 3,
+      },
+      {
+        scenario: 'Calificación perfecta máxima (5, 5, 5, 5, 5 -> 5.0)',
+        ratings: [5, 5, 5, 5, 5],
+        expectedAvg: 5.0,
+        expectedFormatted: '5.0',
+        expectedCount: 5,
+      },
+      {
+        scenario: 'Calificación baja con decimal exacto (1, 2, 3, 4 -> 2.5)',
+        ratings: [1, 2, 3, 4],
+        expectedAvg: 2.5,
+        expectedFormatted: '2.5',
+        expectedCount: 4,
+      },
+      {
+        scenario: 'Una sola reseña con puntaje máximo (5 -> 5.0)',
+        ratings: [5],
+        expectedAvg: 5.0,
+        expectedFormatted: '5.0',
+        expectedCount: 1,
+      },
+      {
+        scenario: 'Una sola reseña con puntaje mínimo (1 -> 1.0)',
+        ratings: [1],
+        expectedAvg: 1.0,
+        expectedFormatted: '1.0',
+        expectedCount: 1,
+      },
+      {
+        scenario: 'Calificación con redondeo hacia abajo (4, 4, 5 -> 4.3)',
+        ratings: [4, 4, 5],
+        expectedAvg: 4.3,
+        expectedFormatted: '4.3',
+        expectedCount: 3,
+      },
+    ];
+
+    it.each(TABULATED_RATING_CASES)(
+      'muestra la calificación calculada con un decimal según RN-24: $scenario',
+      async ({ ratings, expectedAvg, expectedFormatted, expectedCount }) => {
+        const mockReviews = ratings.map((score, i) => ({
+          author_name: `Usuario ${i + 1}`,
+          rating: score,
+          comment: `Comentario de prueba ${i + 1}`,
+          reviewed_on: `2026-03-0${i + 1}`,
+        }));
+
+        const testProvider: Provider = {
+          ...verifiedProvider,
+          id: `prv-rating-${expectedFormatted.replace('.', '-')}`,
+          rating_avg: expectedAvg,
+          rating_count: expectedCount,
+          reviews: mockReviews,
+        };
+
+        const root = await renderScreen(testProvider.id, undefined, false, testProvider);
+        const c = root.container;
+
+        // 1. Verifica calificación en la cabecera
+        expect(has(c, 'provider-rating')).toBe(true);
+        const ratingHeaderText = textOf(find(c, 'provider-rating'));
+        expect(ratingHeaderText).toContain(expectedFormatted);
+        expect(ratingHeaderText).toContain(String(expectedCount));
+
+        // 2. Verifica calificación en la cabecera de la sección de reseñas
+        const reviewsSection = find(c, 'reviews-section');
+        expect(textOf(reviewsSection)).toContain(expectedFormatted);
+        expect(textOf(reviewsSection)).toContain(String(expectedCount));
+      },
+    );
+
+    it('ordena estrictamente las reseñas de la más reciente a la más antigua y limita a máximo 5 (criterio 2.3 y 3.3)', async () => {
+      // 6 reseñas desordenadas con años y meses variados
+      const rawReviews = [
+        { author_name: 'Antiguo 2024', rating: 4, comment: 'C1', reviewed_on: '2024-05-10' },
+        { author_name: 'Reciente Mayo 2026', rating: 5, comment: 'C2', reviewed_on: '2026-05-15' },
+        { author_name: 'Inicio 2026', rating: 4, comment: 'C3', reviewed_on: '2026-01-01' },
+        { author_name: 'Fin 2025', rating: 5, comment: 'C4', reviewed_on: '2025-12-31' },
+        { author_name: 'Abril 2026', rating: 4, comment: 'C5', reviewed_on: '2026-04-10' },
+        { author_name: 'Muy Viejo 2023', rating: 3, comment: 'C6', reviewed_on: '2023-11-01' },
+      ];
+
+      const testProvider: Provider = {
+        ...verifiedProvider,
+        id: 'prv-sort-reviews',
+        rating_avg: 4.2,
+        rating_count: 6,
+        reviews: rawReviews,
+      };
+
+      const root = await renderScreen(testProvider.id, undefined, false, testProvider);
+      const c = root.container;
+
+      // Se limitan a máximo 5 reseñas
+      expect(has(c, 'review-item-0')).toBe(true);
+      expect(has(c, 'review-item-1')).toBe(true);
+      expect(has(c, 'review-item-2')).toBe(true);
+      expect(has(c, 'review-item-3')).toBe(true);
+      expect(has(c, 'review-item-4')).toBe(true);
+      expect(has(c, 'review-item-5')).toBe(false);
+
+      // Orden descendente esperado:
+      // 0: 2026-05-15 (Reciente Mayo 2026)
+      // 1: 2026-04-10 (Abril 2026)
+      // 2: 2026-01-01 (Inicio 2026)
+      // 3: 2025-12-31 (Fin 2025)
+      // 4: 2024-05-10 (Antiguo 2024)
+      // 5: 2023-11-01 (excluida por límite de 5)
+      expect(textOf(find(c, 'review-date-0'))).toBe('2026-05-15');
+      expect(textOf(find(c, 'review-author-0'))).toContain('Reciente Mayo 2026');
+
+      expect(textOf(find(c, 'review-date-1'))).toBe('2026-04-10');
+      expect(textOf(find(c, 'review-author-1'))).toContain('Abril 2026');
+
+      expect(textOf(find(c, 'review-date-2'))).toBe('2026-01-01');
+      expect(textOf(find(c, 'review-author-2'))).toContain('Inicio 2026');
+
+      expect(textOf(find(c, 'review-date-3'))).toBe('2025-12-31');
+      expect(textOf(find(c, 'review-author-3'))).toContain('Fin 2025');
+
+      expect(textOf(find(c, 'review-date-4'))).toBe('2024-05-10');
+      expect(textOf(find(c, 'review-author-4'))).toContain('Antiguo 2024');
+    });
+
+    it('conserva el orden cuando dos reseñas tienen exactamente la misma fecha (caso borde fechas iguales)', async () => {
+      const sameDateReviews = [
+        { author_name: 'Usuario A', rating: 5, comment: 'Comentario A', reviewed_on: '2026-03-15' },
+        { author_name: 'Usuario B', rating: 4, comment: 'Comentario B', reviewed_on: '2026-03-15' },
+        { author_name: 'Usuario Anterior', rating: 5, comment: 'Comentario C', reviewed_on: '2026-01-10' },
+      ];
+
+      const testProvider: Provider = {
+        ...verifiedProvider,
+        id: 'prv-same-date-reviews',
+        rating_avg: 4.7,
+        rating_count: 3,
+        reviews: sameDateReviews,
+      };
+
+      const root = await renderScreen(testProvider.id, undefined, false, testProvider);
+      const c = root.container;
+
+      expect(has(c, 'review-item-0')).toBe(true);
+      expect(has(c, 'review-item-1')).toBe(true);
+      expect(has(c, 'review-item-2')).toBe(true);
+
+      // Ambas reseñas del 2026-03-15 aparecen antes de la del 2026-01-10
+      expect(textOf(find(c, 'review-date-0'))).toBe('2026-03-15');
+      expect(textOf(find(c, 'review-date-1'))).toBe('2026-03-15');
+      expect(textOf(find(c, 'review-date-2'))).toBe('2026-01-10');
+    });
+
+    it('proveedor sin fotos ni reseñas muestra recuadro con nombre, "Sin reseñas" en cabecera y en sección de reseñas (criterio 6)', async () => {
+      const emptyProvider: Provider = {
+        ...verifiedProvider,
+        id: 'prv-vacio-total',
+        name: 'Hacienda Solitaria',
+        images: [],
+        rating_avg: null,
+        rating_count: 0,
+        reviews: [],
+      };
+
+      const root = await renderScreen(emptyProvider.id, undefined, false, emptyProvider);
+      const c = root.container;
+
+      // 1. Galería vacía muestra el placeholder con nombre
+      expect(has(c, 'provider-gallery')).toBe(false);
+      expect(has(c, 'gallery-counter')).toBe(false);
+      expect(has(c, 'gallery-empty-placeholder')).toBe(true);
+      expect(textOf(find(c, 'gallery-empty-placeholder'))).toContain('Hacienda Solitaria');
+
+      // 2. Cabecera muestra literalmente "Sin reseñas"
+      expect(has(c, 'provider-rating')).toBe(true);
+      expect(textOf(find(c, 'provider-rating'))).toContain(NO_REVIEWS_TEXT);
+
+      // 3. Sección de reseñas muestra literalmente "Sin reseñas" y aviso de demostración
+      expect(has(c, 'reviews-section')).toBe(true);
+      expect(has(c, 'reviews-empty')).toBe(true);
+      expect(textOf(find(c, 'reviews-empty'))).toBe(NO_REVIEWS_TEXT);
+      expect(textOf(find(c, 'reviews-notice'))).toBe(DEMO_REVIEWS_NOTICE);
+    });
+
+    it('proveedor con fotos pero sin reseñas muestra galería normal y "Sin reseñas" (criterio 6)', async () => {
+      const photosNoReviewsProvider: Provider = {
+        ...verifiedProvider,
+        id: 'prv-fotos-sin-resenas',
+        images: [
+          { url: 'https://example.com/foto1.jpg', alt_text: 'Foto 1' },
+          { url: 'https://example.com/foto2.jpg', alt_text: 'Foto 2' },
+          { url: 'https://example.com/foto3.jpg', alt_text: 'Foto 3' },
+        ],
+        rating_avg: null,
+        rating_count: 0,
+        reviews: [],
+      };
+
+      const root = await renderScreen(photosNoReviewsProvider.id, undefined, false, photosNoReviewsProvider);
+      const c = root.container;
+
+      // Galería presente con 3 fotos
+      expect(has(c, 'provider-gallery')).toBe(true);
+      expect(textOf(find(c, 'gallery-counter'))).toBe('1/3');
+
+      // Sin reseñas en cabecera y en sección
+      expect(textOf(find(c, 'provider-rating'))).toContain(NO_REVIEWS_TEXT);
+      expect(textOf(find(c, 'reviews-empty'))).toBe(NO_REVIEWS_TEXT);
+    });
+
+    it('proveedor con reseñas pero sin fotos muestra recuadro con nombre y lista de reseñas (criterio 6)', async () => {
+      const reviewsNoPhotosProvider: Provider = {
+        ...verifiedProvider,
+        id: 'prv-resenas-sin-fotos',
+        name: 'DJ Sonido Pro',
+        images: [],
+        rating_avg: 4.5,
+        rating_count: 2,
+        reviews: [
+          { author_name: 'Felipe', rating: 5, comment: 'Excelente música', reviewed_on: '2026-03-01' },
+          { author_name: 'Gloria', rating: 4, comment: 'Buen repertorio', reviewed_on: '2026-02-15' },
+        ],
+      };
+
+      const root = await renderScreen(reviewsNoPhotosProvider.id, undefined, false, reviewsNoPhotosProvider);
+      const c = root.container;
+
+      // Placeholder con nombre
+      expect(has(c, 'gallery-empty-placeholder')).toBe(true);
+      expect(textOf(find(c, 'gallery-empty-placeholder'))).toContain('DJ Sonido Pro');
+
+      // Calificación y reseñas presentes
+      expect(textOf(find(c, 'provider-rating'))).toContain('4.5');
+      expect(textOf(find(c, 'provider-rating'))).toContain('2');
+      expect(has(c, 'review-item-0')).toBe(true);
+      expect(has(c, 'review-item-1')).toBe(true);
+    });
+  });
 });
