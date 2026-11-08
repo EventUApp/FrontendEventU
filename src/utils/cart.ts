@@ -1,11 +1,62 @@
-import type { CartService, Category } from '../api/types';
+import type { CatalogItem, CartService, Category, Package } from '../api/types';
+import { GUESTS_MAX, GUESTS_MIN } from '../config/limits';
 
 /** Rubros obligatorios para poder reservar (RN-03, RN-23). */
 export const REQUIRED_CATEGORIES: Category[] = ['espacio', 'alimentacion', 'decoracion'];
 
+/** Rubro que se puede quitar de «Mi evento»: solo el entretenimiento (HU_EU_02_06, 3.2). */
+export const REMOVABLE_CATEGORY: Category = 'entretenimiento';
+
 export interface AddResult {
   cart: CartService[];
   replaced: CartService | null; // servicio del mismo rubro que se sustituyó (RN-23)
+}
+
+/** Servicios de un paquete recomendado como servicios de «Mi evento» (el costo ya incluye a los invitados). */
+export function packageToCartServices(pkg: Package): CartService[] {
+  return pkg.breakdown.flatMap((line) =>
+    line.items.map((item) => ({
+      service_id: item.service_id,
+      name: item.name,
+      category: line.category,
+      provider_id: item.provider_id,
+      provider_name: item.provider_name,
+      price_model: 'fijo' as const,
+      unit_price_cop: item.cost_cop,
+      min_guests: GUESTS_MIN,
+      max_guests: GUESTS_MAX,
+    })),
+  );
+}
+
+/** Alternativa del catálogo como servicio de «Mi evento». El precio es solo informativo: el servidor decide. */
+export function catalogItemToCartService(item: CatalogItem): CartService {
+  return {
+    service_id: item.id,
+    name: item.name,
+    category: item.category,
+    provider_id: item.provider_id,
+    provider_name: item.provider_name,
+    price_model: item.price_model,
+    unit_price_cop: item.price_cop ?? 0,
+    min_guests: item.min_guests ?? GUESTS_MIN,
+    max_guests: item.max_guests ?? GUESTS_MAX,
+  };
+}
+
+/** Un servicio se puede quitar solo si es de entretenimiento (HU_EU_02_06, 3.2). */
+export function canRemove(s: Pick<CartService, 'category'>): boolean {
+  return s.category === REMOVABLE_CATEGORY;
+}
+
+/** Cambia el servicio de un rubro por otro del mismo rubro. No muta la entrada. */
+export function replaceService(cart: CartService[], item: CartService): CartService[] {
+  return cart.map((c) => (c.category === item.category ? item : c));
+}
+
+/** Presupuesto restante (RN-05). Null si no hay presupuesto (RN-22). */
+export function remainingBudget(cart: CartService[], guests: number, budgetCop: number | null): number | null {
+  return budgetCop === null ? null : budgetCop - cartTotal(cart, guests);
 }
 
 /** Costo de un servicio para un número de invitados (RN-15). Solo informativo: el servidor decide. */
