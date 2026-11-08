@@ -1,5 +1,10 @@
 import { BUDGET_MAX_COP, BUDGET_MIN_COP, GUESTS_MAX, GUESTS_MIN } from '../src/config/limits';
-import { validateBudget, validateEventType, validateGuests } from '../src/utils/validators';
+import {
+  validateBudget,
+  validateEventDate,
+  validateEventType,
+  validateGuests,
+} from '../src/utils/validators';
 
 describe('validateBudget (RN-19, criterios 3.1 y 3.2)', () => {
   it.each(['', '   ', '\t'])('exige valor cuando está vacío (%j)', (input) => {
@@ -75,4 +80,35 @@ describe('validateEventType (RN-19, criterio 3.3)', () => {
   it.each(['cumpleanos', 'boda', 'xv'] as const)('acepta el tipo de evento %s', (type) => {
     expect(validateEventType(type)).toBeNull();
   });
+});
+
+describe('validateEventDate (RN-20, HU_EU_01_12 criterio 3.3)', () => {
+  const EXPECTED_MSG = 'Seleccione una fecha posterior a hoy.';
+  const TODAY = '2026-11-07';
+
+  it.each(['', '   '])('acepta vacío cuando es opcional al buscar (%j)', (input) => {
+    expect(validateEventDate(input, { optional: true, today: TODAY })).toBeNull();
+  });
+
+  it.each(['', '   '])('rechaza vacío cuando es obligatoria al reservar (%j)', (input) => {
+    expect(validateEventDate(input, { optional: false, today: TODAY })).toBe(EXPECTED_MSG);
+  });
+
+  it.each([
+    '2026-11-07', // hoy (no posterior)
+    '2026-11-06', // ayer
+    '2025-01-01', // año anterior
+    '2026-02-30', // fecha inexistente
+    '07/11/2027', // formato inválido
+    'no-es-fecha',
+  ])('rechaza fecha igual o anterior a hoy o con formato inválido (%s)', (input) => {
+    expect(validateEventDate(input, { optional: true, today: TODAY })).toBe(EXPECTED_MSG);
+  });
+
+  it.each(['2026-11-08', '2026-12-15', '2027-05-20', ' 2027-01-01 '])(
+    'acepta fecha posterior a hoy (%s)',
+    (input) => {
+      expect(validateEventDate(input, { optional: true, today: TODAY })).toBeNull();
+    },
+  );
 });
