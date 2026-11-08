@@ -18,6 +18,7 @@ import { LoadingNotice } from '../components/LoadingNotice';
 import { MinimalIcon } from '../components/MinimalIcon';
 import { NetworkErrorView } from '../components/NetworkErrorView';
 import { RatingStars } from '../components/RatingStars';
+import MapView, { Marker } from 'react-native-maps';
 import { GUESTS_MAX, GUESTS_MIN } from '../config/limits';
 import type { RootStackParamList } from '../navigation/types';
 import { useFlow } from '../state/FlowContext';
@@ -29,6 +30,7 @@ import {
   fitsGuests,
   REPLACE_CATEGORY_CONFIRMATION_MESSAGE,
 } from '../utils/cart';
+import { APPROXIMATE_LOCATION_TEXT, isValidCoordinate } from '../utils/map';
 import { formatCOP } from '../utils/money';
 
 const CATEGORY_LABELS: Record<Category, string> = {
@@ -417,6 +419,39 @@ export default function ProveedorScreen({
                 {provider.neighborhood}, {provider.municipality}
               </Text>
             </View>
+
+            {/* Mapa pequeño en la ficha del proveedor (HU_EU_03_14, Criterio 1 y RN-28) */}
+            {provider.latitude !== null &&
+            provider.longitude !== null &&
+            isValidCoordinate(provider.latitude, provider.longitude) ? (
+              <View testID="provider-mini-map-container" style={styles.miniMapContainer}>
+                <MapView
+                  testID="provider-mini-map"
+                  style={styles.miniMap}
+                  initialRegion={{
+                    latitude: provider.latitude,
+                    longitude: provider.longitude,
+                    latitudeDelta: 0.015,
+                    longitudeDelta: 0.015,
+                  }}
+                  scrollEnabled={false}
+                  zoomEnabled={false}
+                  rotateEnabled={false}
+                  pitchEnabled={false}
+                >
+                  <Marker
+                    testID="provider-mini-map-marker"
+                    coordinate={{
+                      latitude: provider.latitude,
+                      longitude: provider.longitude,
+                    }}
+                  />
+                </MapView>
+                <Text style={styles.miniMapNotice} testID="provider-mini-map-notice">
+                  {APPROXIMATE_LOCATION_TEXT}
+                </Text>
+              </View>
+            ) : null}
           </View>
 
           {/* Datos de contacto (Criterio 2.4) */}
@@ -1104,5 +1139,23 @@ const styles = StyleSheet.create({
     fontSize: font.base,
     color: colors.text,
     lineHeight: 22,
+  },
+  miniMapContainer: {
+    marginTop: spacing.sm,
+    borderRadius: 8,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  miniMap: {
+    width: '100%',
+    height: 140,
+  },
+  miniMapNotice: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    fontSize: 12,
+    color: colors.muted,
+    backgroundColor: '#F7F7FA',
   },
 });

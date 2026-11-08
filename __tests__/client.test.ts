@@ -351,6 +351,16 @@ describe('getProviders (HU_EU_02_05 — T_HU_EU_02_05_4)', () => {
     },
   );
 
+  it('serializa el parámetro bbox para búsqueda en zona (HU_EU_03_14, ADR-13, §7.1)', async () => {
+    const mockProviders: ProvidersResponse = { items: [], total: 0, page: 1, page_size: 10 };
+    g.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => mockProviders });
+
+    await getProviders({ bbox: '3.4116,-76.5720,3.4916,-76.4920' });
+
+    const calledUrl = g.fetch.mock.calls[0][0] as string;
+    expect(calledUrl).toContain('bbox=3.4116%2C-76.5720%2C3.4916%2C-76.4920');
+  });
+
   it('propaga NetworkError y sanitiza errores 500 con mensaje genérico (criterio 6)', async () => {
     g.fetch = jest.fn().mockRejectedValueOnce(new TypeError('Network failure'));
     await expect(getProviders({ page: 1, page_size: 10 })).rejects.toBeInstanceOf(NetworkError);
