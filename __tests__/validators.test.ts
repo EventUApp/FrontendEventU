@@ -355,7 +355,7 @@ describe('formatCardNumber y formatCardExpiry', () => {
     expect(formatCardNumber('4242424242424242')).toBe('4242 4242 4242 4242');
     expect(formatCardNumber('424242')).toBe('4242 42');
     expect(formatCardNumber('42')).toBe('42');
-    expect(formatCardNumber('42424242424242429999')).toBe('4242 4242 4242 4242');
+    expect(formatCardNumber('42424242424242429999')).toBe('4242 4242 4242 4242 9999');
   });
 
   it('formatCardExpiry inserta la barra tras los dos dígitos del mes', () => {

@@ -68,6 +68,7 @@ export default function PagoScreen() {
   const cardNumberRef = useRef(cardNumber);
   const cardExpiryRef = useRef(cardExpiry);
   const cardCvvRef = useRef(cardCvv);
+  const isSubmittingRef = useRef(false);
 
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
   const [paymentError, setPaymentError] = useState<string | null>(null);
@@ -133,7 +134,7 @@ export default function PagoScreen() {
   };
 
   const handleSubmit = async () => {
-    if (loading) return;
+    if (loading || isSubmittingRef.current) return;
 
     const currentNumber = cardNumberRef.current;
     const currentExpiry = cardExpiryRef.current;
@@ -163,6 +164,7 @@ export default function PagoScreen() {
       return;
     }
 
+    isSubmittingRef.current = true;
     setLoading(true);
     setSlow(false);
 
@@ -185,21 +187,22 @@ export default function PagoScreen() {
         },
       );
 
-      // Regla que no se rompe #6: NUNCA guardar datos de tarjeta en el flujo.
-      cardNumberRef.current = '';
-      cardExpiryRef.current = '';
-      cardCvvRef.current = '';
-      setCardNumber('');
-      setCardExpiry('');
-      setCardCvv('');
-
       if (response.payment.status === 'aprobado') {
+        // Regla que no se rompe #6: NUNCA guardar datos de tarjeta en el flujo.
+        cardNumberRef.current = '';
+        cardExpiryRef.current = '';
+        cardCvvRef.current = '';
+        setCardNumber('');
+        setCardExpiry('');
+        setCardCvv('');
+
         update({ lastPayment: response.payment });
         if (navigation) {
           navigation.navigate('Confirmacion');
         }
       } else {
         // Pago rechazado (HTTP 200 con status 'rechazado') (criterio 6, RF-PAG-04)
+        // Permite verificar datos o intentar con otra tarjeta (RF-PAG-05)
         setPaymentError(PAYMENT_DECLINED_MESSAGE);
       }
     } catch (err) {
@@ -234,6 +237,7 @@ export default function PagoScreen() {
         setGenericError(UNEXPECTED_ERROR_MESSAGE);
       }
     } finally {
+      isSubmittingRef.current = false;
       setLoading(false);
       setSlow(false);
     }

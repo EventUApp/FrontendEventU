@@ -169,7 +169,7 @@ export function validateCardCvv(text: string): string | null {
  * Formatea un número de tarjeta agrupado de a 4 dígitos (p. ej. 4242 4242 4242 4242).
  */
 export function formatCardNumber(digits: string): string {
-  const clean = digits.replace(/\D/g, '').slice(0, 16);
+  const clean = digits.replace(/\D/g, '');
   const parts = clean.match(/.{1,4}/g);
   return parts ? parts.join(' ') : clean;
 }
