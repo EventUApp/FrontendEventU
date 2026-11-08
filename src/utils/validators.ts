@@ -79,3 +79,34 @@ export function validatePriceRange(
   return null;
 }
 
+/** Mensajes literales de HU_EU_03_09 (criterios 3.1 a 3.4). */
+export const NAME_REQUIRED_MESSAGE = 'Ingrese su nombre.';
+export const EMAIL_INVALID_MESSAGE = 'Ingrese un correo electrónico válido.';
+export const PHONE_INVALID_MESSAGE = 'Ingrese un teléfono de 10 dígitos.';
+export const DATE_POSTERIOR_MESSAGE = 'Seleccione una fecha posterior a hoy.';
+
+/**
+ * Valida nombre obligatorio (criterio 3.1).
+ */
+export function validateName(text: string): string | null {
+  return text.trim() === '' ? NAME_REQUIRED_MESSAGE : null;
+}
+
+/**
+ * Valida correo electrónico con formato válido (criterio 3.2).
+ */
+export function validateEmail(text: string): string | null {
+  const trimmed = text.trim();
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(trimmed) ? null : EMAIL_INVALID_MESSAGE;
+}
+
+/**
+ * Valida teléfono numérico de exactamente 10 dígitos (Propuesto, criterio 3.3).
+ */
+export function validatePhone(text: string): string | null {
+  const trimmed = text.trim();
+  return /^\d{10}$/.test(trimmed) ? null : PHONE_INVALID_MESSAGE;
+}
+
+
