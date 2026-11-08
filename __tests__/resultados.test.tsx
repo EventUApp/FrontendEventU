@@ -1210,4 +1210,522 @@ describe('ResultadosScreen (HU_EU_02_05 — T_HU_EU_02_05_2)', () => {
       expect(snapshot.filters.sort).toBe('precio_desc');
     });
   });
+
+  describe('T_HU_EU_02_15_3: Pruebas de filtros combinados tabulados, orden RN-26 y validación de precios', () => {
+    beforeEach(() => {
+      mockRouteParams = undefined;
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+      mockNavigate.mockReset();
+    });
+
+    interface TabulatedCase {
+      scenario: string;
+      initial: Partial<FlowState>;
+      expectedQuery: Record<string, unknown>;
+      expectedChips: { testID: string; labelSubstring: string }[];
+      expectedFilterBadgeCount: number;
+      expectedSortToolbarText: string;
+    }
+
+    const TABULATED_CASES: TabulatedCase[] = [
+      {
+        scenario: 'Rubro (alimentacion) + Tipo de evento (xv)',
+        initial: {
+          filters: { category: 'alimentacion', event_type: 'xv' },
+        },
+        expectedQuery: { category: 'alimentacion', event_type: 'xv' },
+        expectedChips: [
+          { testID: 'chip-category', labelSubstring: 'Alimentación' },
+          { testID: 'chip-event-type', labelSubstring: 'XV años' },
+        ],
+        expectedFilterBadgeCount: 2,
+        expectedSortToolbarText: 'Ordenar',
+      },
+      {
+        scenario: 'Rubro (entretenimiento) + Rango completo de precio (500.000 a 2.000.000) + Orden Menor precio',
+        initial: {
+          filters: {
+            category: 'entretenimiento',
+            min_price_cop: 500_000,
+            max_price_cop: 2_000_000,
+            sort: 'precio_asc',
+          },
+        },
+        expectedQuery: {
+          category: 'entretenimiento',
+          min_price_cop: 500_000,
+          max_price_cop: 2_000_000,
+          sort: 'precio_asc',
+        },
+        expectedChips: [
+          { testID: 'chip-category', labelSubstring: 'Entretenimiento' },
+          { testID: 'chip-price', labelSubstring: '$500.000 - $2.000.000' },
+          { testID: 'chip-sort', labelSubstring: 'Menor precio' },
+        ],
+        expectedFilterBadgeCount: 2,
+        expectedSortToolbarText: 'Menor precio',
+      },
+      {
+        scenario: 'Calificación mínima (4,5) + Solo verificados (true) + Orden Mejor calificados',
+        initial: {
+          filters: {
+            min_rating: 4.5,
+            verified: true,
+            sort: 'calificacion',
+          },
+        },
+        expectedQuery: {
+          min_rating: 4.5,
+          verified: true,
+          sort: 'calificacion',
+        },
+        expectedChips: [
+          { testID: 'chip-rating', labelSubstring: '★ 4.5+' },
+          { testID: 'chip-verified', labelSubstring: 'Solo verificados' },
+          { testID: 'chip-sort', labelSubstring: 'Mejor calificados' },
+        ],
+        expectedFilterBadgeCount: 2,
+        expectedSortToolbarText: 'Mejor calificados',
+      },
+      {
+        scenario: 'Todos los filtros activos (espacio, boda, precio 1M-10M, 4 estrellas, verificados) + Mayor precio',
+        initial: {
+          filters: {
+            category: 'espacio',
+            event_type: 'boda',
+            min_price_cop: 1_000_000,
+            max_price_cop: 10_000_000,
+            min_rating: 4,
+            verified: true,
+            sort: 'precio_desc',
+          },
+        },
+        expectedQuery: {
+          category: 'espacio',
+          event_type: 'boda',
+          min_price_cop: 1_000_000,
+          max_price_cop: 10_000_000,
+          min_rating: 4,
+          verified: true,
+          sort: 'precio_desc',
+        },
+        expectedChips: [
+          { testID: 'chip-category', labelSubstring: 'Espacio' },
+          { testID: 'chip-event-type', labelSubstring: 'Boda' },
+          { testID: 'chip-price', labelSubstring: '$1.000.000 - $10.000.000' },
+          { testID: 'chip-rating', labelSubstring: '★ 4+' },
+          { testID: 'chip-verified', labelSubstring: 'Solo verificados' },
+          { testID: 'chip-sort', labelSubstring: 'Mayor precio' },
+        ],
+        expectedFilterBadgeCount: 5,
+        expectedSortToolbarText: 'Mayor precio',
+      },
+      {
+        scenario: 'Solo precio mínimo (Desde $ 3.000.000) sin máximo',
+        initial: {
+          filters: {
+            min_price_cop: 3_000_000,
+          },
+        },
+        expectedQuery: {
+          min_price_cop: 3_000_000,
+        },
+        expectedChips: [
+          { testID: 'chip-price', labelSubstring: 'Desde $3.000.000' },
+        ],
+        expectedFilterBadgeCount: 1,
+        expectedSortToolbarText: 'Ordenar',
+      },
+      {
+        scenario: 'Solo precio máximo (Hasta $ 8.000.000) sin mínimo',
+        initial: {
+          filters: {
+            max_price_cop: 8_000_000,
+          },
+        },
+        expectedQuery: {
+          max_price_cop: 8_000_000,
+        },
+        expectedChips: [
+          { testID: 'chip-price', labelSubstring: 'Hasta $8.000.000' },
+        ],
+        expectedFilterBadgeCount: 1,
+        expectedSortToolbarText: 'Ordenar',
+      },
+      {
+        scenario: 'Tipo de evento (Cumpleaños) + Calificación mínima (3+)',
+        initial: {
+          filters: {
+            event_type: 'cumpleanos',
+            min_rating: 3,
+          },
+        },
+        expectedQuery: {
+          event_type: 'cumpleanos',
+          min_rating: 3,
+        },
+        expectedChips: [
+          { testID: 'chip-event-type', labelSubstring: 'Cumpleaños' },
+          { testID: 'chip-rating', labelSubstring: '★ 3+' },
+        ],
+        expectedFilterBadgeCount: 2,
+        expectedSortToolbarText: 'Ordenar',
+      },
+    ];
+
+    it.each(TABULATED_CASES)(
+      'aplica la combinación tabulada "$scenario" enviando la consulta exacta y mostrando sus chips (criterios 2.1-2.7 y 5)',
+      async ({
+        initial,
+        expectedQuery,
+        expectedChips,
+        expectedFilterBadgeCount,
+        expectedSortToolbarText,
+      }) => {
+        const spy = jest.spyOn(endpoints, 'getProviders').mockResolvedValue({
+          items: [makeProvider(1)],
+          total: 1,
+          page: 1,
+          page_size: 10,
+        });
+
+        const root = createRoot();
+        await act(async () => {
+          root.render(
+            <FlowProvider>
+              <FlowHarness initial={initial} />
+            </FlowProvider>,
+          );
+        });
+
+        await act(async () => {
+          press(findByTestId(root.container, 'seed-flow'));
+        });
+
+        // 1. Verifica llamada a getProviders con los parámetros esperados
+        expect(spy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            ...expectedQuery,
+            page: 1,
+            page_size: 10,
+          }),
+          expect.any(Object),
+        );
+
+        // 2. Verifica contador en el botón de Filtros
+        const btnFilters = findByTestId(root.container, 'btn-filters');
+        if (expectedFilterBadgeCount > 0) {
+          expect(textOf(btnFilters)).toContain(`Filtros (${expectedFilterBadgeCount})`);
+        } else {
+          expect(textOf(btnFilters)).toBe('Filtros');
+        }
+
+        // 3. Verifica etiqueta en el botón de Ordenar
+        const btnSort = findByTestId(root.container, 'btn-sort');
+        expect(textOf(btnSort)).toContain(expectedSortToolbarText);
+
+        // 4. Verifica presencia y texto de cada chip esperado
+        expect(hasTestId(root.container, 'active-filters-chips')).toBe(true);
+        for (const chip of expectedChips) {
+          expect(hasTestId(root.container, chip.testID)).toBe(true);
+          const chipNode = findByTestId(root.container, chip.testID);
+          expect(textOf(chipNode)).toContain(chip.labelSubstring);
+        }
+      },
+    );
+
+    it('rechaza precio mínimo mayor que el máximo con mensaje literal y no aplica ni cierra la hoja (criterio 3.1)', async () => {
+      const spy = jest.spyOn(endpoints, 'getProviders').mockResolvedValue({
+        items: [makeProvider(1)],
+        total: 1,
+        page: 1,
+        page_size: 10,
+      });
+
+      const root = createRoot();
+      await act(async () => {
+        root.render(
+          <FlowProvider>
+            <ResultadosScreen />
+          </FlowProvider>,
+        );
+      });
+
+      // Abre Filtros
+      await act(async () => {
+        press(findByTestId(root.container, 'btn-filters'));
+      });
+
+      // Ingresa precio min: 7.000.000 y max: 3.000.000
+      await act(async () => {
+        findByTestId(root.container, 'input-min-price').props.onChangeText('7000000');
+        findByTestId(root.container, 'input-max-price').props.onChangeText('3000000');
+      });
+
+      const callsBefore = spy.mock.calls.length;
+
+      // Presiona Aplicar
+      await act(async () => {
+        press(findByTestId(root.container, 'btn-apply-filters'));
+      });
+
+      // Permanece abierta la hoja y muestra el error literal
+      expect(hasTestId(root.container, 'filters-sheet')).toBe(true);
+      expect(hasTestId(root.container, 'error-price-range')).toBe(true);
+      expect(textOf(findByTestId(root.container, 'error-price-range'))).toBe(
+        'El precio mínimo no puede ser mayor que el máximo.',
+      );
+
+      // No se realizó una nueva llamada al API con ese rango inválido
+      expect(spy).toHaveBeenCalledTimes(callsBefore);
+    });
+
+    it('permite aplicar cuando precio mínimo es exactamente igual al máximo (caso borde min == max)', async () => {
+      const spy = jest.spyOn(endpoints, 'getProviders').mockResolvedValue({
+        items: [makeProvider(1)],
+        total: 1,
+        page: 1,
+        page_size: 10,
+      });
+
+      const root = createRoot();
+      await act(async () => {
+        root.render(
+          <FlowProvider>
+            <ResultadosScreen />
+          </FlowProvider>,
+        );
+      });
+
+      // Abre Filtros
+      await act(async () => {
+        press(findByTestId(root.container, 'btn-filters'));
+      });
+
+      // Ingresa precio min == max (2.500.000)
+      await act(async () => {
+        findByTestId(root.container, 'input-min-price').props.onChangeText('2500000');
+        findByTestId(root.container, 'input-max-price').props.onChangeText('2500000');
+      });
+
+      // Presiona Aplicar
+      await act(async () => {
+        press(findByTestId(root.container, 'btn-apply-filters'));
+      });
+
+      // Se cierra la hoja y se envía la consulta con ambos valores iguales
+      expect(hasTestId(root.container, 'filters-sheet')).toBe(false);
+      expect(spy).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          min_price_cop: 2_500_000,
+          max_price_cop: 2_500_000,
+        }),
+        expect.any(Object),
+      );
+    });
+
+    it('sanitiza caracteres no numéricos en los campos de precio aceptando solo números enteros (criterio 3.2)', async () => {
+      const root = createRoot();
+      await act(async () => {
+        root.render(
+          <FlowProvider>
+            <ResultadosScreen />
+          </FlowProvider>,
+        );
+      });
+
+      // Abre Filtros
+      await act(async () => {
+        press(findByTestId(root.container, 'btn-filters'));
+      });
+
+      // Escribe texto con letras, símbolos y puntos
+      await act(async () => {
+        findByTestId(root.container, 'input-min-price').props.onChangeText('$ 1.250.000 COP');
+        findByTestId(root.container, 'input-max-price').props.onChangeText('4.800.000,00');
+      });
+
+      // Solo quedan los dígitos numéricos
+      expect(findByTestId(root.container, 'input-min-price').props.value).toBe('1250000');
+      expect(findByTestId(root.container, 'input-max-price').props.value).toBe('480000000');
+    });
+
+    it('muestra el estado vacío literal con botón Limpiar filtros cuando no hay resultados (criterio 6)', async () => {
+      const spy = jest.spyOn(endpoints, 'getProviders').mockResolvedValue({
+        items: [],
+        total: 0,
+        page: 1,
+        page_size: 10,
+      });
+
+      const root = createRoot();
+      await act(async () => {
+        root.render(
+          <FlowProvider>
+            <FlowHarness
+              initial={{
+                filters: {
+                  category: 'entretenimiento',
+                  min_rating: 4.5,
+                },
+              }}
+            />
+          </FlowProvider>,
+        );
+      });
+
+      await act(async () => {
+        press(findByTestId(root.container, 'seed-flow'));
+      });
+
+      // Se muestra la tarjeta de vacío con el mensaje literal
+      expect(hasTestId(root.container, 'empty-results')).toBe(true);
+      const emptyNode = findByTestId(root.container, 'empty-results');
+      expect(textOf(emptyNode)).toContain('No encontramos proveedores con esos criterios.');
+
+      // Botón Limpiar filtros disponible
+      expect(hasTestId(root.container, 'btn-clear-filters')).toBe(true);
+
+      // Ahora simula que al limpiar hay resultados
+      spy.mockResolvedValueOnce({
+        items: [makeProvider(1)],
+        total: 1,
+        page: 1,
+        page_size: 10,
+      });
+
+      // Presiona Limpiar filtros en el estado vacío
+      await act(async () => {
+        press(findByTestId(root.container, 'btn-clear-filters'));
+      });
+
+      // Se limpia el estado del flujo
+      const snapshot = getFlowSnapshot(root.container);
+      expect(snapshot.filters.category).toBeUndefined();
+      expect(snapshot.filters.min_rating).toBeUndefined();
+    });
+
+    it('permite quitar el chip de orden restableciendo el orden a recomendados (criterios 2.6 y 5)', async () => {
+      const spy = jest.spyOn(endpoints, 'getProviders').mockResolvedValue({
+        items: [makeProvider(1)],
+        total: 1,
+        page: 1,
+        page_size: 10,
+      });
+
+      const root = createRoot();
+      await act(async () => {
+        root.render(
+          <FlowProvider>
+            <FlowHarness
+              initial={{
+                filters: {
+                  sort: 'precio_desc',
+                },
+              }}
+            />
+          </FlowProvider>,
+        );
+      });
+
+      await act(async () => {
+        press(findByTestId(root.container, 'seed-flow'));
+      });
+
+      // El chip de orden existe
+      expect(hasTestId(root.container, 'chip-sort')).toBe(true);
+      expect(textOf(findByTestId(root.container, 'chip-sort'))).toContain('Mayor precio');
+
+      // Remueve el chip de orden
+      await act(async () => {
+        press(findByTestId(root.container, 'chip-remove-sort'));
+      });
+
+      // El chip desaparece
+      expect(hasTestId(root.container, 'chip-sort')).toBe(false);
+
+      // El botón en el toolbar vuelve a 'Ordenar'
+      expect(textOf(findByTestId(root.container, 'btn-sort'))).toBe('Ordenar');
+
+      // FlowContext ya no tiene sort 'precio_desc'
+      const snapshot = getFlowSnapshot(root.container);
+      expect(snapshot.filters.sort).toBeUndefined();
+
+      // getProviders es llamado con baseQuery sin sort
+      expect(spy).toHaveBeenLastCalledWith(
+        expect.not.objectContaining({ sort: 'precio_desc' }),
+        expect.any(Object),
+      );
+    });
+
+    it('permite remover chips de filtros secuencialmente y usar Limpiar filtros en chips (criterios 2.7 y 5)', async () => {
+      jest.spyOn(endpoints, 'getProviders').mockResolvedValue({
+        items: [makeProvider(1)],
+        total: 1,
+        page: 1,
+        page_size: 10,
+      });
+
+      const root = createRoot();
+      await act(async () => {
+        root.render(
+          <FlowProvider>
+            <FlowHarness
+              initial={{
+                filters: {
+                  category: 'decoracion',
+                  event_type: 'boda',
+                  min_rating: 4,
+                  verified: true,
+                },
+              }}
+            />
+          </FlowProvider>,
+        );
+      });
+
+      await act(async () => {
+        press(findByTestId(root.container, 'seed-flow'));
+      });
+
+      // 4 chips iniciales
+      expect(hasTestId(root.container, 'chip-category')).toBe(true);
+      expect(hasTestId(root.container, 'chip-event-type')).toBe(true);
+      expect(hasTestId(root.container, 'chip-rating')).toBe(true);
+      expect(hasTestId(root.container, 'chip-verified')).toBe(true);
+
+      // Quitar rubro decoracion
+      await act(async () => {
+        press(findByTestId(root.container, 'chip-remove-category'));
+      });
+      expect(hasTestId(root.container, 'chip-category')).toBe(false);
+      expect(hasTestId(root.container, 'chip-event-type')).toBe(true);
+      expect(hasTestId(root.container, 'chip-rating')).toBe(true);
+      expect(hasTestId(root.container, 'chip-verified')).toBe(true);
+
+      // Quitar tipo de evento
+      await act(async () => {
+        press(findByTestId(root.container, 'chip-remove-event-type'));
+      });
+      expect(hasTestId(root.container, 'chip-event-type')).toBe(false);
+      expect(hasTestId(root.container, 'chip-rating')).toBe(true);
+      expect(hasTestId(root.container, 'chip-verified')).toBe(true);
+
+      // Presionar Limpiar filtros en la barra de chips
+      await act(async () => {
+        press(findByTestId(root.container, 'btn-clear-all-chips'));
+      });
+
+      // No quedan chips
+      expect(hasTestId(root.container, 'active-filters-chips')).toBe(false);
+      const snapshot = getFlowSnapshot(root.container);
+      expect(snapshot.filters.category).toBeUndefined();
+      expect(snapshot.filters.event_type).toBeUndefined();
+      expect(snapshot.filters.min_rating).toBeUndefined();
+      expect(snapshot.filters.verified).toBeUndefined();
+    });
+  });
 });
