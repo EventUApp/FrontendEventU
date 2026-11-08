@@ -130,6 +130,12 @@ export default function CompararScreen() {
     });
   };
 
+  const activeSelectedModalities = useMemo(() => {
+    return selectedModalities.filter((m) =>
+      eligiblePackages.some((p) => p.modality === m),
+    );
+  }, [selectedModalities, eligiblePackages]);
+
   const handleChoosePackage = (pkg: Package) => {
     const cartServices = packageToCartServices(pkg);
     const serviceIds = cartServices.map((s) => s.service_id);
@@ -143,10 +149,10 @@ export default function CompararScreen() {
   };
 
   const comparedPackages = useMemo(() => {
-    return eligiblePackages.filter((p) => selectedModalities.includes(p.modality));
-  }, [eligiblePackages, selectedModalities]);
+    return eligiblePackages.filter((p) => activeSelectedModalities.includes(p.modality));
+  }, [eligiblePackages, activeSelectedModalities]);
 
-  const isLessThanTwo = selectedModalities.length < 2;
+  const isLessThanTwo = activeSelectedModalities.length < 2;
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
@@ -195,7 +201,7 @@ export default function CompararScreen() {
           <Text style={styles.sectionLabel}>Seleccione los paquetes a comparar (2 o 3):</Text>
           <View style={styles.checkboxRow}>
             {eligiblePackages.map((pkg) => {
-              const isChecked = selectedModalities.includes(pkg.modality);
+              const isChecked = activeSelectedModalities.includes(pkg.modality);
               return (
                 <Pressable
                   key={pkg.modality}
