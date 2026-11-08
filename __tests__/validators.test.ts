@@ -389,6 +389,9 @@ describe('validateReservationCode (HU_EU_03_11, criterios 3.1 y 3.2, RN-18)', ()
     'EU-123-56', // guiones adicionales
     'EU-8K9M2!', // caracteres especiales
     'EU-8K9M2 ', // espacio interior
+    'EU-8K9M2ñ', // carácter fuera de ascii alfanumérico
+    'EU-12345🎉', // emoji
+    'EU-$$$$$$', // símbolos
   ])('criterio 3.2: rechaza formato distinto de EU- más 6 caracteres alfanuméricos (%s)', (input) => {
     expect(validateReservationCode(input)).toBe('El número de reserva no es válido.');
   });
