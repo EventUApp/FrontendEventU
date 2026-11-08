@@ -6,8 +6,10 @@ import { ApiError, GENERIC_ERROR, NetworkError } from '../src/api/client';
 import * as endpoints from '../src/api/endpoints';
 import type { Provider } from '../src/api/types';
 import ProveedorScreen, {
+  DEMO_REVIEWS_NOTICE,
   INELIGIBLE_GUESTS_MESSAGE,
   NOT_FOUND_MESSAGE,
+  NO_REVIEWS_TEXT,
   VERIFICATION_WARNING_MESSAGE,
 } from '../src/screens/ProveedorScreen';
 import { FlowProvider, useFlow, type FlowState } from '../src/state/FlowContext';
@@ -173,7 +175,11 @@ async function renderScreen(
   providerId: string,
   initial?: Partial<FlowState>,
   requireReplaceConfirm?: boolean,
+  mockData?: Provider,
 ) {
+  if (mockData) {
+    jest.spyOn(endpoints, 'getProvider').mockResolvedValue(mockData);
+  }
   const root = createRoot();
   await act(async () => {
     root.render(
@@ -710,6 +716,211 @@ describe('T_HU_EU_02_08_5: Casos de la regla de verificación, proveedor inexist
 
       expect(has(c, 'provider-not-found')).toBe(true);
       expect(textOf(find(c, 'provider-not-found'))).toBe(NOT_FOUND_MESSAGE);
+    });
+  });
+
+  describe('HU_EU_02_16: Galería de fotos, calificación y reseñas', () => {
+    const providerWithGalleryAndReviews: Provider = {
+      ...verifiedProvider,
+      id: 'prv-galeria-resenas',
+      name: 'Salón Monteverde',
+      images: [
+        { url: 'https://example.com/foto1.jpg', alt_text: 'Fachada principal' },
+        { url: 'https://example.com/foto2.jpg', alt_text: 'Jardín exterior' },
+        { url: 'https://example.com/foto3.jpg', alt_text: 'Pista de baile' },
+        { url: 'https://example.com/foto4.jpg', alt_text: 'Zona de banquete' },
+      ],
+      rating_avg: 4.6,
+      rating_count: 6,
+      reviews: [
+        {
+          author_name: 'Carlos Ruiz',
+          rating: 5,
+          comment: 'Excelente lugar, la atención fue maravillosa.',
+          reviewed_on: '2026-02-10',
+        },
+        {
+          author_name: 'María Gómez',
+          rating: 4,
+          comment: 'Muy bonito y amplio para bodas.',
+          reviewed_on: '2026-03-01',
+        },
+        {
+          author_name: 'Andrés López',
+          rating: 5,
+          comment: 'La comida y la ambientación fueron de 10.',
+          reviewed_on: '2026-01-15',
+        },
+        {
+          author_name: 'Lucía Torres',
+          rating: 4,
+          comment: 'Muy recomendable para cumpleaños.',
+          reviewed_on: '2025-12-20',
+        },
+        {
+          author_name: 'Daniel Vargas',
+          rating: 5,
+          comment: 'Instalaciones impecables y personal atento.',
+          reviewed_on: '2026-02-28',
+        },
+        {
+          author_name: 'Sofía Castro',
+          rating: 4,
+          comment: 'Buena experiencia en general.',
+          reviewed_on: '2025-11-10',
+        },
+      ],
+    };
+
+    it('muestra la galería de fotos con contador "n/N" y textos alternativos (criterios 2.1 y 5)', async () => {
+      const root = await renderScreen(providerWithGalleryAndReviews.id, undefined, false, providerWithGalleryAndReviews);
+      const c = root.container;
+
+      expect(has(c, 'provider-gallery')).toBe(true);
+      expect(has(c, 'gallery-counter')).toBe(true);
+      expect(textOf(find(c, 'gallery-counter'))).toBe('1/4');
+
+      expect(has(c, 'gallery-image-0')).toBe(true);
+      expect(has(c, 'gallery-image-1')).toBe(true);
+      expect(has(c, 'gallery-image-2')).toBe(true);
+      expect(has(c, 'gallery-image-3')).toBe(true);
+
+      const img0 = find(c, 'gallery-image-0');
+      expect(img0.props.accessibilityLabel).toBe('Fachada principal');
+    });
+
+    it('muestra un recuadro neutro sin error si una foto falla al cargar (criterio 4)', async () => {
+      const root = await renderScreen(providerWithGalleryAndReviews.id, undefined, false, providerWithGalleryAndReviews);
+      const c = root.container;
+
+      const img1 = find(c, 'gallery-image-1');
+      await act(async () => {
+        img1.props.onError?.();
+      });
+
+      expect(has(c, 'gallery-placeholder-1')).toBe(true);
+      expect(has(c, 'gallery-image-1')).toBe(false);
+      // El placeholder neutro no debe mostrar mensajes de error feos
+      expect(textOf(find(c, 'gallery-placeholder-1'))).toBe('');
+    });
+
+    it('muestra un recuadro con el nombre del proveedor si no tiene fotos (criterio 6)', async () => {
+      const noPhotosProvider: Provider = {
+        ...providerWithGalleryAndReviews,
+        id: 'prv-sin-fotos',
+        name: 'Proveedor Sin Fotos',
+        images: [],
+      };
+      const root = await renderScreen(noPhotosProvider.id, undefined, false, noPhotosProvider);
+      const c = root.container;
+
+      expect(has(c, 'gallery-empty-placeholder')).toBe(true);
+      expect(textOf(find(c, 'gallery-empty-placeholder'))).toContain('Proveedor Sin Fotos');
+    });
+
+    it('muestra la calificación promedio con estrellas y el conteo de reseñas (criterios 2.2, 3.1)', async () => {
+      const root = await renderScreen(providerWithGalleryAndReviews.id, undefined, false, providerWithGalleryAndReviews);
+      const c = root.container;
+
+      expect(has(c, 'provider-rating')).toBe(true);
+      const ratingText = textOf(find(c, 'provider-rating'));
+      expect(ratingText).toContain('4.6');
+      expect(ratingText).toContain('6');
+    });
+
+    it('muestra "Sin reseñas" si no tiene calificación ni reseñas (criterios 3.1, 6)', async () => {
+      const unratedProvider: Provider = {
+        ...providerWithGalleryAndReviews,
+        id: 'prv-sin-calificacion',
+        rating_avg: null,
+        rating_count: 0,
+        reviews: [],
+      };
+      const root = await renderScreen(unratedProvider.id, undefined, false, unratedProvider);
+      const c = root.container;
+
+      const ratingNode = find(c, 'provider-rating');
+      expect(textOf(ratingNode)).toContain(NO_REVIEWS_TEXT);
+
+      const reviewsSec = find(c, 'reviews-section');
+      expect(textOf(reviewsSec)).toContain(NO_REVIEWS_TEXT);
+    });
+
+    it('muestra la sección de reseñas con aviso de ejemplo y hasta 5 ordenadas de más reciente a más antigua (criterios 2.3, 2.4, 3.3)', async () => {
+      const root = await renderScreen(providerWithGalleryAndReviews.id, undefined, false, providerWithGalleryAndReviews);
+      const c = root.container;
+
+      expect(has(c, 'reviews-section')).toBe(true);
+      expect(textOf(find(c, 'reviews-notice'))).toBe(DEMO_REVIEWS_NOTICE);
+
+      // Aunque hay 6 reseñas en el modelo, se limitan a máximo 5
+      expect(has(c, 'review-item-0')).toBe(true);
+      expect(has(c, 'review-item-1')).toBe(true);
+      expect(has(c, 'review-item-2')).toBe(true);
+      expect(has(c, 'review-item-3')).toBe(true);
+      expect(has(c, 'review-item-4')).toBe(true);
+      expect(has(c, 'review-item-5')).toBe(false);
+
+      // Orden cronológico descendente:
+      // 1: María Gómez (2026-03-01)
+      // 2: Daniel Vargas (2026-02-28)
+      // 3: Carlos Ruiz (2026-02-10)
+      // 4: Andrés López (2026-01-15)
+      // 5: Lucía Torres (2025-12-20)
+      expect(textOf(find(c, 'review-author-0'))).toContain('María Gómez');
+      expect(textOf(find(c, 'review-date-0'))).toContain('2026-03-01');
+      expect(textOf(find(c, 'review-comment-0'))).toContain('Muy bonito y amplio para bodas.');
+
+      expect(textOf(find(c, 'review-author-1'))).toContain('Daniel Vargas');
+      expect(textOf(find(c, 'review-author-2'))).toContain('Carlos Ruiz');
+      expect(textOf(find(c, 'review-author-3'))).toContain('Andrés López');
+      expect(textOf(find(c, 'review-author-4'))).toContain('Lucía Torres');
+    });
+
+    it('al desplazar la galería horizontalmente se actualiza el contador "n/N" (criterio 2.1)', async () => {
+      const root = await renderScreen(
+        providerWithGalleryAndReviews.id,
+        undefined,
+        false,
+        providerWithGalleryAndReviews,
+      );
+      const c = root.container;
+
+      const galleryScroll = find(c, 'gallery-scroll-view');
+      await act(async () => {
+        galleryScroll.props.onScroll({
+          nativeEvent: {
+            contentOffset: { x: 750 },
+          },
+        });
+      });
+
+      expect(textOf(find(c, 'gallery-counter'))).toBe('2/4');
+    });
+
+    it('cada reseña muestra nombre de autor, fecha, puntaje de 1 a 5 con estrellas y comentario (criterio 2.3)', async () => {
+      const root = await renderScreen(
+        providerWithGalleryAndReviews.id,
+        undefined,
+        false,
+        providerWithGalleryAndReviews,
+      );
+      const c = root.container;
+
+      const ratingRow0 = find(c, 'review-rating-0');
+      expect(textOf(ratingRow0)).toContain('4 de 5');
+      expect(textOf(ratingRow0)).toContain('★★★★');
+    });
+
+    it('cumple restricción: reseñas son de solo lectura sin formularios ni subida de fotos (criterio 4, RN-27)', async () => {
+      const root = await renderScreen(providerWithGalleryAndReviews.id, undefined, false, providerWithGalleryAndReviews);
+      const c = root.container;
+
+      // No debe haber TextInput en toda la ficha ni botones para agregar reseña
+      const textInputs = c.queryAll((n) => n.type === 'TextInput');
+      expect(textInputs).toHaveLength(0);
+      expect(has(c, 'btn-add-review')).toBe(false);
+      expect(has(c, 'btn-upload-photo')).toBe(false);
     });
   });
 });
