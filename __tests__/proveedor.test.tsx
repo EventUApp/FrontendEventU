@@ -11,6 +11,11 @@ import ProveedorScreen, {
   VERIFICATION_WARNING_MESSAGE,
 } from '../src/screens/ProveedorScreen';
 import { FlowProvider, useFlow, type FlowState } from '../src/state/FlowContext';
+import {
+  CANCEL_REPLACE_TEXT,
+  CONFIRM_REPLACE_TEXT,
+  REPLACE_CATEGORY_CONFIRMATION_MESSAGE,
+} from '../src/utils/cart';
 
 jest.mock('@react-navigation/native', () => {
   const actual = jest.requireActual('@react-navigation/native');
@@ -134,9 +139,11 @@ const unverifiedProvider: Provider = {
 function Harness({
   initial,
   providerId,
+  requireReplaceConfirm,
 }: {
   initial?: Partial<FlowState>;
   providerId: string;
+  requireReplaceConfirm?: boolean;
 }) {
   const { flow, update } = useFlow();
   const [mounted, setMounted] = React.useState(!initial);
@@ -152,19 +159,30 @@ function Harness({
           }}
         />
       ) : (
-        <ProveedorScreen route={{ params: { providerId } }} />
+        <ProveedorScreen
+          route={{ params: { providerId } }}
+          requireReplaceConfirm={requireReplaceConfirm}
+        />
       )}
       <Text testID="flow-snapshot">{JSON.stringify(flow)}</Text>
     </>
   );
 }
 
-async function renderScreen(providerId: string, initial?: Partial<FlowState>) {
+async function renderScreen(
+  providerId: string,
+  initial?: Partial<FlowState>,
+  requireReplaceConfirm?: boolean,
+) {
   const root = createRoot();
   await act(async () => {
     root.render(
       <FlowProvider>
-        <Harness initial={initial} providerId={providerId} />
+        <Harness
+          initial={initial}
+          providerId={providerId}
+          requireReplaceConfirm={requireReplaceConfirm}
+        />
       </FlowProvider>,
     );
   });
@@ -584,6 +602,104 @@ describe('T_HU_EU_02_08_5: Casos de la regla de verificación, proveedor inexist
       ]);
       expect(flowSnap.cart.map((s) => s.category)).toEqual(['alimentacion', 'espacio']);
       expect(flowSnap.cartOrigin).toBe('personalizado');
+    });
+
+    it('con confirmación habilitada (requireReplaceConfirm), muestra diálogo y Cancelar no altera el carrito (criterio 3.1)', async () => {
+      jest.spyOn(endpoints, 'getProvider').mockResolvedValue(verifiedProvider);
+
+      const existingCart = [
+        {
+          service_id: 'svc-espacio-viejo',
+          name: 'Salón Viejo',
+          category: 'espacio' as const,
+          provider_id: 'prv-otro',
+          provider_name: 'Otro Proveedor',
+          price_model: 'fijo' as const,
+          unit_price_cop: 2_000_000,
+          min_guests: 10,
+          max_guests: 300,
+        },
+      ];
+
+      const root = await renderScreen(
+        verifiedProvider.id,
+        { cart: existingCart, guests: 100 },
+        true, // requireReplaceConfirm = true
+      );
+      const c = root.container;
+
+      expect(has(c, 'replace-confirmation-dialog')).toBe(false);
+
+      // Presiona agregar otro salón (mismo rubro espacio)
+      await act(async () => {
+        press(find(c, 'btn-add-service-svc-salon-campestre'));
+      });
+
+      // Debe mostrar el diálogo de confirmación con el mensaje literal
+      expect(has(c, 'replace-confirmation-dialog')).toBe(true);
+      expect(textOf(find(c, 'replace-confirmation-text'))).toBe(
+        REPLACE_CATEGORY_CONFIRMATION_MESSAGE,
+      );
+      expect(textOf(find(c, 'replace-confirmation-text'))).toBe(
+        'Ya tiene un servicio de este rubro. ¿Desea reemplazarlo?',
+      );
+      expect(textOf(find(c, 'btn-confirm-replace'))).toBe(CONFIRM_REPLACE_TEXT);
+      expect(textOf(find(c, 'btn-cancel-replace'))).toBe(CANCEL_REPLACE_TEXT);
+
+      // El carrito aún no cambia
+      expect(snapshot(c).cart.map((s) => s.service_id)).toEqual(['svc-espacio-viejo']);
+
+      // Toca Cancelar
+      await act(async () => {
+        press(find(c, 'btn-cancel-replace'));
+      });
+
+      // Se oculta el diálogo y el carrito sigue intacto
+      expect(has(c, 'replace-confirmation-dialog')).toBe(false);
+      expect(snapshot(c).cart.map((s) => s.service_id)).toEqual(['svc-espacio-viejo']);
+    });
+
+    it('con confirmación habilitada (requireReplaceConfirm), Reemplazar sustituye el rubro en el carrito (criterio 3.1)', async () => {
+      jest.spyOn(endpoints, 'getProvider').mockResolvedValue(verifiedProvider);
+
+      const existingCart = [
+        {
+          service_id: 'svc-espacio-viejo',
+          name: 'Salón Viejo',
+          category: 'espacio' as const,
+          provider_id: 'prv-otro',
+          provider_name: 'Otro Proveedor',
+          price_model: 'fijo' as const,
+          unit_price_cop: 2_000_000,
+          min_guests: 10,
+          max_guests: 300,
+        },
+      ];
+
+      const root = await renderScreen(
+        verifiedProvider.id,
+        { cart: existingCart, guests: 100 },
+        true, // requireReplaceConfirm = true
+      );
+      const c = root.container;
+
+      // Presiona agregar
+      await act(async () => {
+        press(find(c, 'btn-add-service-svc-salon-campestre'));
+      });
+
+      expect(has(c, 'replace-confirmation-dialog')).toBe(true);
+
+      // Toca Reemplazar
+      await act(async () => {
+        press(find(c, 'btn-confirm-replace'));
+      });
+
+      // Se oculta el diálogo y el servicio fue sustituido con cartOrigin personalizado
+      expect(has(c, 'replace-confirmation-dialog')).toBe(false);
+      const snap = snapshot(c);
+      expect(snap.cart.map((s) => s.service_id)).toEqual(['svc-salon-campestre']);
+      expect(snap.cartOrigin).toBe('personalizado');
     });
   });
 

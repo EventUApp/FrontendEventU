@@ -2,19 +2,28 @@ import type { CartService, CatalogItem, Category, Package } from '../src/api/typ
 import { GUESTS_MAX, GUESTS_MIN } from '../src/config/limits';
 import {
   addToCart,
+  CANCEL_REPLACE_TEXT,
   canRemove,
   canReserve,
   cartTotal,
   catalogItemToCartService,
+  CONFIRM_REPLACE_TEXT,
+  CONTINUE_TO_RESERVE_TEXT,
+  EMPTY_CART_ACTION_TEXT,
+  EMPTY_CART_MESSAGE,
+  INELIGIBLE_GUESTS_MESSAGE,
   ineligibleAfterGuestsChange,
   missingCategories,
+  MISSING_CATEGORIES_MESSAGE,
   packageToCartServices,
   remainingBudget,
   REMOVABLE_CATEGORY,
   removeFromCart,
+  REPLACE_CATEGORY_CONFIRMATION_MESSAGE,
   replaceService,
   REQUIRED_CATEGORIES,
   serviceCost,
+  UNEXPECTED_ERROR_MESSAGE,
   withinBudget,
 } from '../src/utils/cart';
 
@@ -302,5 +311,160 @@ describe('HU_EU_02_06 — T_HU_EU_02_06_3: recálculo, casos límite del presupu
       max_guests: GUESTS_MAX,
     });
     expect(serviceCost(converted, 100)).toBe(2_500_000);
+  });
+});
+
+describe('HU_EU_02_13 — T_HU_EU_02_13_1: Estado de Mi evento (utils/cart)', () => {
+  it('constantes literales coinciden con los criterios de aceptación de HU_EU_02_13', () => {
+    expect(REPLACE_CATEGORY_CONFIRMATION_MESSAGE).toBe(
+      'Ya tiene un servicio de este rubro. ¿Desea reemplazarlo?',
+    );
+    expect(CONFIRM_REPLACE_TEXT).toBe('Reemplazar');
+    expect(CANCEL_REPLACE_TEXT).toBe('Cancelar');
+    expect(INELIGIBLE_GUESTS_MESSAGE).toBe('Este servicio no admite ese número de invitados.');
+    expect(MISSING_CATEGORIES_MESSAGE).toBe(
+      'Agregue espacio, alimentación y decoración para reservar.',
+    );
+    expect(EMPTY_CART_MESSAGE).toBe('Aún no ha agregado servicios.');
+    expect(EMPTY_CART_ACTION_TEXT).toBe('Ir al inicio');
+    expect(UNEXPECTED_ERROR_MESSAGE).toBe(
+      'No fue posible completar la operación. Intente nuevamente.',
+    );
+    expect(CONTINUE_TO_RESERVE_TEXT).toBe('Continuar a reservar');
+  });
+
+  describe('Adición con reemplazo por rubro (criterio 3.1, RN-23)', () => {
+    it('agrega servicio cuando el carrito está vacío sin reemplazo', () => {
+      const item = svc({ service_id: 's1', category: 'espacio' });
+      const res = addToCart([], item);
+      expect(res.cart).toEqual([item]);
+      expect(res.replaced).toBeNull();
+    });
+
+    it('agrega servicios de rubros distintos acumulándolos', () => {
+      const sEspacio = svc({ service_id: 's1', category: 'espacio' });
+      const sAlim = svc({ service_id: 's2', category: 'alimentacion' });
+      const sDeco = svc({ service_id: 's3', category: 'decoracion' });
+
+      let current = addToCart([], sEspacio).cart;
+      current = addToCart(current, sAlim).cart;
+      const res = addToCart(current, sDeco);
+
+      expect(res.cart).toHaveLength(3);
+      expect(res.cart.map((s) => s.category)).toEqual(['espacio', 'alimentacion', 'decoracion']);
+      expect(res.replaced).toBeNull();
+    });
+
+    it('reemplaza el servicio existente si es del mismo rubro y conserva los demás (RN-23)', () => {
+      const sEspacio1 = svc({ service_id: 's1', category: 'espacio', name: 'Salón 1' });
+      const sAlim = svc({ service_id: 's2', category: 'alimentacion' });
+      const sEspacio2 = svc({ service_id: 's3', category: 'espacio', name: 'Salón 2' });
+
+      const initial = [sEspacio1, sAlim];
+      const res = addToCart(initial, sEspacio2);
+
+      expect(res.cart).toHaveLength(2);
+      expect(res.cart.map((s) => s.service_id)).toEqual(['s2', 's3']);
+      expect(res.replaced).toEqual(sEspacio1);
+    });
+
+    it('addToCart no muta el array de entrada', () => {
+      const s1 = svc({ service_id: 's1', category: 'espacio' });
+      const s2 = svc({ service_id: 's2', category: 'espacio' });
+      const original = [s1];
+      Object.freeze(original);
+
+      const res = addToCart(original, s2);
+      expect(res.cart).toHaveLength(1);
+      expect(res.cart[0].service_id).toBe('s2');
+      expect(res.replaced).toEqual(s1);
+    });
+  });
+
+  describe('Quitar servicios (criterio 2.1 y HU_EU_02_06)', () => {
+    it('removeFromCart elimina el servicio indicado sin mutar el array original', () => {
+      const s1 = svc({ service_id: 's1' });
+      const s2 = svc({ service_id: 's2' });
+      const original = [s1, s2];
+      Object.freeze(original);
+
+      const result = removeFromCart(original, 's1');
+      expect(result).toEqual([s2]);
+    });
+
+    it('removeFromCart con id inexistente devuelve los mismos elementos', () => {
+      const s1 = svc({ service_id: 's1' });
+      const result = removeFromCart([s1], 'inexistente');
+      expect(result).toEqual([s1]);
+    });
+  });
+
+  describe('Revalidación por cambio de invitados (criterios 3.2, 3.4 y RN-14)', () => {
+    const cart = [
+      svc({ service_id: 'esp', category: 'espacio', min_guests: 50, max_guests: 150 }),
+      svc({ service_id: 'ali', category: 'alimentacion', min_guests: 20, max_guests: 200 }),
+      svc({ service_id: 'dec', category: 'decoracion', min_guests: 10, max_guests: 500 }),
+    ];
+
+    it.each([
+      {
+        caso: '100 invitados está dentro de la capacidad de todos -> ninguno inelegible',
+        guests: 100,
+        expectedIneligibleIds: [],
+      },
+      {
+        caso: '40 invitados está por debajo del mínimo de espacio (50) -> espacio inelegible',
+        guests: 40,
+        expectedIneligibleIds: ['esp'],
+      },
+      {
+        caso: '15 invitados está por debajo del mínimo de espacio (50) y alimentación (20)',
+        guests: 15,
+        expectedIneligibleIds: ['esp', 'ali'],
+      },
+      {
+        caso: '180 invitados excede el máximo de espacio (150) -> espacio inelegible',
+        guests: 180,
+        expectedIneligibleIds: ['esp'],
+      },
+      {
+        caso: '250 invitados excede el máximo de espacio (150) y alimentación (200)',
+        guests: 250,
+        expectedIneligibleIds: ['esp', 'ali'],
+      },
+      {
+        caso: 'Borde exacto mínimo de espacio (50) -> todos admiten',
+        guests: 50,
+        expectedIneligibleIds: [],
+      },
+      {
+        caso: 'Borde exacto máximo de espacio (150) -> todos admiten',
+        guests: 150,
+        expectedIneligibleIds: [],
+      },
+    ])('$caso', ({ guests, expectedIneligibleIds }) => {
+      const ineligible = ineligibleAfterGuestsChange(cart, guests);
+      expect(ineligible.map((s) => s.service_id)).toEqual(expectedIneligibleIds);
+    });
+  });
+
+  describe('Reglas de reserva mínima (criterio 3.3, RN-03)', () => {
+    it('canReserve exige espacio, alimentación y decoración', () => {
+      const espacio = svc({ category: 'espacio' });
+      const alimentacion = svc({ category: 'alimentacion' });
+      const decoracion = svc({ category: 'decoracion' });
+      const entretenimiento = svc({ category: 'entretenimiento' });
+
+      expect(canReserve([])).toBe(false);
+      expect(canReserve([espacio])).toBe(false);
+      expect(canReserve([espacio, alimentacion])).toBe(false);
+      expect(missingCategories([espacio, alimentacion])).toEqual(['decoracion']);
+
+      expect(canReserve([espacio, alimentacion, decoracion])).toBe(true);
+      expect(missingCategories([espacio, alimentacion, decoracion])).toEqual([]);
+
+      // Entretenimiento es opcional pero con los 4 rubros también es válido
+      expect(canReserve([espacio, alimentacion, decoracion, entretenimiento])).toBe(true);
+    });
   });
 });

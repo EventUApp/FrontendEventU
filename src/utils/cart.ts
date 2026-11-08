@@ -7,6 +7,20 @@ export const REQUIRED_CATEGORIES: Category[] = ['espacio', 'alimentacion', 'deco
 /** Rubro que se puede quitar de «Mi evento»: solo el entretenimiento (HU_EU_02_06, 3.2). */
 export const REMOVABLE_CATEGORY: Category = 'entretenimiento';
 
+/** Mensajes literales de HU_EU_02_13 (criterios 2.5, 3.1, 3.2, 3.3 y 6). */
+export const REPLACE_CATEGORY_CONFIRMATION_MESSAGE =
+  'Ya tiene un servicio de este rubro. ¿Desea reemplazarlo?';
+export const CONFIRM_REPLACE_TEXT = 'Reemplazar';
+export const CANCEL_REPLACE_TEXT = 'Cancelar';
+export const INELIGIBLE_GUESTS_MESSAGE = 'Este servicio no admite ese número de invitados.';
+export const MISSING_CATEGORIES_MESSAGE =
+  'Agregue espacio, alimentación y decoración para reservar.';
+export const EMPTY_CART_MESSAGE = 'Aún no ha agregado servicios.';
+export const EMPTY_CART_ACTION_TEXT = 'Ir al inicio';
+export const UNEXPECTED_ERROR_MESSAGE =
+  'No fue posible completar la operación. Intente nuevamente.';
+export const CONTINUE_TO_RESERVE_TEXT = 'Continuar a reservar';
+
 export interface AddResult {
   cart: CartService[];
   replaced: CartService | null; // servicio del mismo rubro que se sustituyó (RN-23)
