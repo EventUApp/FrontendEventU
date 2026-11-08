@@ -48,6 +48,36 @@ export const NOT_FOUND_MESSAGE = 'No encontramos este proveedor.';
 export const DEMO_REVIEWS_NOTICE = 'Reseñas de ejemplo para la demostración.';
 export const NO_REVIEWS_TEXT = 'Sin reseñas';
 
+interface MiniMapErrorBoundaryProps {
+  children: React.ReactNode;
+}
+
+interface MiniMapErrorBoundaryState {
+  hasError: boolean;
+}
+
+class MiniMapErrorBoundary extends React.Component<
+  MiniMapErrorBoundaryProps,
+  MiniMapErrorBoundaryState
+> {
+  state: MiniMapErrorBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(): MiniMapErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error): void {
+    console.error('Caught error in provider mini map:', error);
+  }
+
+  render(): React.ReactNode {
+    if (this.state.hasError) {
+      return null;
+    }
+    return this.props.children;
+  }
+}
+
 function useRouteSafe(): RouteProp<RootStackParamList, 'Proveedor'> | null {
   try {
     return useRoute<RouteProp<RootStackParamList, 'Proveedor'>>();
@@ -424,33 +454,35 @@ export default function ProveedorScreen({
             {provider.latitude !== null &&
             provider.longitude !== null &&
             isValidCoordinate(provider.latitude, provider.longitude) ? (
-              <View testID="provider-mini-map-container" style={styles.miniMapContainer}>
-                <MapView
-                  testID="provider-mini-map"
-                  style={styles.miniMap}
-                  initialRegion={{
-                    latitude: provider.latitude,
-                    longitude: provider.longitude,
-                    latitudeDelta: 0.015,
-                    longitudeDelta: 0.015,
-                  }}
-                  scrollEnabled={false}
-                  zoomEnabled={false}
-                  rotateEnabled={false}
-                  pitchEnabled={false}
-                >
-                  <Marker
-                    testID="provider-mini-map-marker"
-                    coordinate={{
+              <MiniMapErrorBoundary>
+                <View testID="provider-mini-map-container" style={styles.miniMapContainer}>
+                  <MapView
+                    testID="provider-mini-map"
+                    style={styles.miniMap}
+                    initialRegion={{
                       latitude: provider.latitude,
                       longitude: provider.longitude,
+                      latitudeDelta: 0.015,
+                      longitudeDelta: 0.015,
                     }}
-                  />
-                </MapView>
-                <Text style={styles.miniMapNotice} testID="provider-mini-map-notice">
-                  {APPROXIMATE_LOCATION_TEXT}
-                </Text>
-              </View>
+                    scrollEnabled={false}
+                    zoomEnabled={false}
+                    rotateEnabled={false}
+                    pitchEnabled={false}
+                  >
+                    <Marker
+                      testID="provider-mini-map-marker"
+                      coordinate={{
+                        latitude: provider.latitude,
+                        longitude: provider.longitude,
+                      }}
+                    />
+                  </MapView>
+                  <Text style={styles.miniMapNotice} testID="provider-mini-map-notice">
+                    {APPROXIMATE_LOCATION_TEXT}
+                  </Text>
+                </View>
+              </MiniMapErrorBoundary>
             ) : null}
           </View>
 

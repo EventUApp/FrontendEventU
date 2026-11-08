@@ -24,14 +24,18 @@ export const MAP_LOAD_ERROR_MESSAGE = 'No fue posible mostrar el mapa. Use la vi
 export const APPROXIMATE_LOCATION_TEXT = 'Ubicación aproximada';
 
 /**
- * Valida si las coordenadas son válidas y ambas están presentes (Criterio 3.1).
+ * Valida si las coordenadas son válidas, ambas están presentes y están dentro del rango geográfico válido (Criterio 3.1).
  */
 export function isValidCoordinate(latitude: unknown, longitude: unknown): boolean {
   return (
     typeof latitude === 'number' &&
     typeof longitude === 'number' &&
-    !isNaN(latitude) &&
-    !isNaN(longitude)
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude) &&
+    latitude >= -90 &&
+    latitude <= 90 &&
+    longitude >= -180 &&
+    longitude <= 180
   );
 }
 
@@ -40,9 +44,11 @@ export function isValidCoordinate(latitude: unknown, longitude: unknown): boolea
  * Formato del API: 'lat_min,lon_min,lat_max,lon_max' (SAD ADR-13 y §7.1).
  */
 export function calculateBbox(region: MapRegion): string {
-  const latMin = (region.latitude - region.latitudeDelta / 2).toFixed(4);
-  const lonMin = (region.longitude - region.longitudeDelta / 2).toFixed(4);
-  const latMax = (region.latitude + region.latitudeDelta / 2).toFixed(4);
-  const lonMax = (region.longitude + region.longitudeDelta / 2).toFixed(4);
+  const latDelta = Math.abs(region.latitudeDelta);
+  const lonDelta = Math.abs(region.longitudeDelta);
+  const latMin = (region.latitude - latDelta / 2).toFixed(4);
+  const lonMin = (region.longitude - lonDelta / 2).toFixed(4);
+  const latMax = (region.latitude + latDelta / 2).toFixed(4);
+  const lonMax = (region.longitude + lonDelta / 2).toFixed(4);
   return `${latMin},${lonMin},${latMax},${lonMax}`;
 }
