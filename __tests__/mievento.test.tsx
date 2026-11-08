@@ -293,3 +293,191 @@ describe('MiEventoScreen: Cambiar, Quitar y Restablecer (HU_EU_02_06 — T_HU_EU
     expect(has(root.container, 'cart-empty')).toBe(true);
   });
 });
+
+describe('MiEventoScreen: recálculo, casos límite del presupuesto, presupuesto ausente y servicios no removibles (HU_EU_02_06 — T_HU_EU_02_06_3)', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it.each<{
+    caso: string;
+    category: CartService['category'];
+    alternative: CatalogItem;
+    expectedServiceIds: string[];
+    expectedTotalText: string;
+    expectedRemainingText: string;
+    quoteTotal: number;
+  }>([
+    {
+      caso: 'reemplazo fijo en espacio que reduce el total y aumenta el restante',
+      category: 'espacio',
+      alternative: catalogItem('esp-barato', 'espacio', 750_000),
+      expectedServiceIds: ['esp-barato', 'ali', 'dec', 'ent'],
+      expectedTotalText: '$3.550.000',
+      expectedRemainingText: '$450.000',
+      quoteTotal: 3_550_000,
+    },
+    {
+      caso: 'reemplazo por_invitado en alimentación (18.000 x 100 = 1.800.000)',
+      category: 'alimentacion',
+      alternative: catalogItem('ali-inv', 'alimentacion', 18_000, { price_model: 'por_invitado' }),
+      expectedServiceIds: ['esp', 'ali-inv', 'dec', 'ent'],
+      expectedTotalText: '$3.600.000',
+      expectedRemainingText: '$400.000',
+      quoteTotal: 3_600_000,
+    },
+    {
+      caso: 'caso límite: reemplazo que deja el total exactamente igual al presupuesto (restante $0)',
+      category: 'decoracion',
+      alternative: catalogItem('dec-tope', 'decoracion', 700_000),
+      expectedServiceIds: ['esp', 'ali', 'dec-tope', 'ent'],
+      expectedTotalText: '$4.000.000',
+      expectedRemainingText: '$0',
+      quoteTotal: 4_000_000,
+    },
+  ])(
+    'recalcula en vivo en la misma pantalla: $caso (criterios 2.2, 2.4, 3.3, 4 y 5)',
+    async ({ category, alternative, expectedServiceIds, expectedTotalText, expectedRemainingText, quoteTotal }) => {
+      jest.spyOn(endpoints, 'getCatalog').mockResolvedValue({ items: [alternative] });
+      const post = jest.spyOn(endpoints, 'postQuote').mockResolvedValue(quoteFor(quoteTotal, 4_000_000));
+
+      const root = await mount(BASE);
+      const c = root.container;
+
+      await act(async () => void press(find(c, `btn-change-${category}`)));
+      await act(async () => void press(find(c, `alt-${alternative.id}`)));
+
+      expect(post).toHaveBeenCalledWith(
+        {
+          budget_cop: 4_000_000,
+          event_type: 'boda',
+          guests: 100,
+          service_ids: expectedServiceIds,
+        },
+        expect.any(Object),
+      );
+      expect(textOf(find(c, 'cart-total'))).toBe(expectedTotalText);
+      expect(textOf(find(c, 'cart-remaining'))).toBe(expectedRemainingText);
+      expect(snapshot(c).cart.map((s) => s.service_id)).toEqual(expectedServiceIds);
+      expect(has(c, 'cart-error')).toBe(false);
+    },
+  );
+
+  it.each<{
+    caso: string;
+    category: CartService['category'];
+    alternative: CatalogItem;
+  }>([
+    {
+      caso: 'excede el presupuesto por 1 COP (total $4.000.001 > presupuesto $4.000.000)',
+      category: 'espacio',
+      alternative: catalogItem('esp-limite-mas-1', 'espacio', 1_200_001),
+    },
+    {
+      caso: 'alternativa por_invitado que al multiplicar por 100 invitados supera el presupuesto ($25.000 x 100 = $2.500.000 -> total $4.300.000)',
+      category: 'alimentacion',
+      alternative: catalogItem('ali-cara-inv', 'alimentacion', 25_000, { price_model: 'por_invitado' }),
+    },
+    {
+      caso: 'alternativa de entretenimiento que supera el presupuesto ($600.000 -> total $4.100.000)',
+      category: 'entretenimiento',
+      alternative: catalogItem('ent-caro', 'entretenimiento', 600_000),
+    },
+  ])(
+    'rechaza sin aplicar el cambio cuando $caso (criterios 4 y 6)',
+    async ({ category, alternative }) => {
+      jest.spyOn(endpoints, 'getCatalog').mockResolvedValue({ items: [alternative] });
+      const post = jest.spyOn(endpoints, 'postQuote');
+
+      const root = await mount(BASE);
+      const c = root.container;
+
+      await act(async () => void press(find(c, `btn-change-${category}`)));
+      await act(async () => void press(find(c, `alt-${alternative.id}`)));
+
+      expect(post).not.toHaveBeenCalled();
+      expect(textOf(find(c, 'cart-error'))).toBe('Ese cambio supera su presupuesto. Elija otra opción.');
+      expect(textOf(find(c, 'cart-total'))).toBe('$3.800.000');
+      expect(textOf(find(c, 'cart-remaining'))).toBe('$200.000');
+      expect(snapshot(c).cart.map((s) => s.service_id)).toEqual(['esp', 'ali', 'dec', 'ent']);
+    },
+  );
+
+  it('con presupuesto ausente (null) permite cambios de cualquier monto y quitar entretenimiento sin mostrar nunca presupuesto restante (RN-22, criterios 2.4 y 4)', async () => {
+    jest.spyOn(endpoints, 'getCatalog').mockResolvedValue({
+      items: [catalogItem('esp-lujo', 'espacio', 15_000_000)],
+    });
+    const post = jest
+      .spyOn(endpoints, 'postQuote')
+      .mockResolvedValueOnce(quoteFor(17_800_000, null))
+      .mockResolvedValueOnce(quoteFor(17_500_000, null));
+
+    const root = await mount({ ...BASE, budgetCop: null });
+    const c = root.container;
+
+    expect(has(c, 'cart-remaining')).toBe(false);
+    expect(textOf(find(c, 'cart-total'))).toBe('$3.800.000');
+
+    // Cambiar espacio por uno de $15.000.000 sin tope de presupuesto
+    await act(async () => void press(find(c, 'btn-change-espacio')));
+    await act(async () => void press(find(c, 'alt-esp-lujo')));
+
+    expect(post).toHaveBeenNthCalledWith(
+      1,
+      { event_type: 'boda', guests: 100, service_ids: ['esp-lujo', 'ali', 'dec', 'ent'] },
+      expect.any(Object),
+    );
+    expect(textOf(find(c, 'cart-total'))).toBe('$17.800.000');
+    expect(has(c, 'cart-remaining')).toBe(false);
+
+    // Quitar entretenimiento también mantiene oculto el restante
+    await act(async () => void press(find(c, 'btn-remove-ent')));
+    expect(post).toHaveBeenNthCalledWith(
+      2,
+      { event_type: 'boda', guests: 100, service_ids: ['esp-lujo', 'ali', 'dec'] },
+      expect.any(Object),
+    );
+    expect(textOf(find(c, 'cart-total'))).toBe('$17.500.000');
+    expect(has(c, 'cart-remaining')).toBe(false);
+  });
+
+  it('no permite quitar espacio, alimentación ni decoración, y tras quitar entretenimiento no queda ningún botón Quitar (criterios 2.3 y 3.2)', async () => {
+    jest.spyOn(endpoints, 'postQuote').mockResolvedValue(quoteFor(3_500_000, 4_000_000));
+    const root = await mount(BASE);
+    const c = root.container;
+
+    // Antes de quitar entretenimiento: Cambiar existe en los 4 rubros, Quitar solo en entretenimiento
+    for (const cat of ['espacio', 'alimentacion', 'decoracion', 'entretenimiento'] as const) {
+      expect(has(c, `btn-change-${cat}`)).toBe(true);
+    }
+    expect(has(c, 'btn-remove-esp')).toBe(false);
+    expect(has(c, 'btn-remove-ali')).toBe(false);
+    expect(has(c, 'btn-remove-dec')).toBe(false);
+    expect(has(c, 'btn-remove-ent')).toBe(true);
+
+    // Al quitar entretenimiento, ningún servicio restante en pantalla tiene botón Quitar
+    await act(async () => void press(find(c, 'btn-remove-ent')));
+    expect(findAllText(c)).not.toContain('Quitar');
+    expect(snapshot(c).cart.map((s) => s.category)).toEqual(['espacio', 'alimentacion', 'decoracion']);
+  });
+
+  it('filtra alternativas que no cumplen min_guests o max_guests para el número de invitados del evento (criterio 3.1, RN-14)', async () => {
+    jest.spyOn(endpoints, 'getCatalog').mockResolvedValue({
+      items: [
+        catalogItem('ali', 'alimentacion', 2_000_000), // servicio actual: excluido
+        catalogItem('ali-min-alto', 'alimentacion', 1_500_000, { min_guests: 150, max_guests: 300 }), // exige mínimo 150 > 100
+        catalogItem('ali-max-bajo', 'alimentacion', 1_200_000, { min_guests: 10, max_guests: 80 }), // admite máximo 80 < 100
+        catalogItem('ali-exacto', 'alimentacion', 17_500, { price_model: 'por_invitado', min_guests: 100, max_guests: 100 }), // elegible en el borde
+      ],
+    });
+
+    const root = await mount(BASE);
+    const c = root.container;
+
+    await act(async () => void press(find(c, 'btn-change-alimentacion')));
+
+    expect(has(c, 'alt-ali')).toBe(false);
+    expect(has(c, 'alt-ali-min-alto')).toBe(false);
+    expect(has(c, 'alt-ali-max-bajo')).toBe(false);
+    expect(has(c, 'alt-ali-exacto')).toBe(true);
+    expect(textOf(find(c, 'alt-ali-exacto'))).toContain('$1.750.000');
+  });
+});
