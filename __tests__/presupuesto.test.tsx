@@ -257,4 +257,78 @@ describe('PresupuestoScreen (HU_EU_01_01)', () => {
     const texts = findAllText(root.container);
     expect(texts).toContain('No fue posible completar la operación. Intente nuevamente.');
   });
+
+  it('muestra los errores de campo devueltos por POST /recommendations ante 422 VALIDATION_ERROR', async () => {
+    jest.spyOn(endpoints, 'postRecommendations').mockRejectedValue(
+      new ApiError(422, 'VALIDATION_ERROR', 'Revise los datos ingresados.', {
+        budget_cop: 'El presupuesto debe estar entre $1.000.000 y $50.000.000.',
+        guests: 'Ingrese un número de invitados entre 1 y 500.',
+      }),
+    );
+
+    const root = createRoot();
+    act(() => {
+      root.render(
+        <FlowProvider>
+          <FlowHarness initial={{ budgetCop: 3_000_000, eventType: 'boda', guests: 80 }} />
+        </FlowProvider>,
+      );
+    });
+
+    act(() => {
+      press(findByTestId(root.container, 'seed-flow'));
+    });
+
+    await act(async () => {
+      await press(findByTestId(root.container, 'btn-submit'));
+    });
+
+    const texts = findAllText(root.container);
+    expect(texts).toContain('El presupuesto debe estar entre $1.000.000 y $50.000.000.');
+    expect(texts).toContain('Ingrese un número de invitados entre 1 y 500.');
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('permite corregir errores de validación y enviar el formulario con éxito (criterio 3.5)', async () => {
+    const spy = jest.spyOn(endpoints, 'postRecommendations').mockResolvedValue({
+      packages: [],
+      unavailable: [],
+    });
+
+    const root = createRoot();
+    act(() => {
+      root.render(
+        <FlowProvider>
+          <PresupuestoScreen />
+        </FlowProvider>,
+      );
+    });
+
+    act(() => {
+      press(findByTestId(root.container, 'btn-submit'));
+    });
+
+    expect(findAllText(root.container)).toContain('Ingrese su presupuesto.');
+    expect(spy).not.toHaveBeenCalled();
+
+    act(() => {
+      findByTestId(root.container, 'input-budget').props.onChangeText('1.000.000');
+      press(findByTestId(root.container, 'option-cumpleanos'));
+      findByTestId(root.container, 'input-guests').props.onChangeText('1');
+    });
+
+    expect(findAllText(root.container)).not.toContain('Ingrese su presupuesto.');
+    expect(findAllText(root.container)).not.toContain('Seleccione el tipo de evento.');
+    expect(findAllText(root.container)).not.toContain('Ingrese un número de invitados entre 1 y 500.');
+
+    await act(async () => {
+      await press(findByTestId(root.container, 'btn-submit'));
+    });
+
+    expect(spy).toHaveBeenCalledWith(
+      { budget_cop: 1_000_000, event_type: 'cumpleanos', guests: 1 },
+      expect.any(Object),
+    );
+    expect(mockNavigate).toHaveBeenCalledWith('Paquetes');
+  });
 });
