@@ -534,6 +534,34 @@ describe('getProvider (HU_EU_02_08 — T_HU_EU_02_08_3)', () => {
     );
   });
 
+  it('devuelve galería de fotos y lista de reseñas en GET /providers/{id} (HU_EU_02_16 / T_HU_EU_02_16_5)', async () => {
+    const providerWithReviews: Provider = {
+      ...mockProvider,
+      images: [
+        { url: 'https://example.com/foto1.jpg', alt_text: 'Jardín' },
+        { url: 'https://example.com/foto2.jpg', alt_text: 'Salón' },
+        { url: 'https://example.com/foto3.jpg', alt_text: 'Piscina' },
+      ],
+      rating_avg: 4.7,
+      rating_count: 3,
+      reviews: [
+        { author_name: 'Ana', rating: 5, comment: 'Excelente', reviewed_on: '2026-04-01' },
+        { author_name: 'Luis', rating: 5, comment: 'Mágico', reviewed_on: '2026-03-15' },
+        { author_name: 'Pedro', rating: 4, comment: 'Muy bueno', reviewed_on: '2026-02-10' },
+      ],
+    };
+    g.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => providerWithReviews });
+
+    const res = await getProvider('prv-hacienda-real');
+
+    expect(res.images).toHaveLength(3);
+    expect(res.reviews).toHaveLength(3);
+    expect(res.rating_avg).toBe(4.7);
+    expect(res.rating_count).toBe(3);
+    expect(res.reviews[0].author_name).toBe('Ana');
+    expect(res.reviews[0].rating).toBe(5);
+  });
+
   it('propaga ApiError con status 404 si el proveedor no existe (criterio 6)', async () => {
     g.fetch = jest.fn().mockResolvedValue({
       ok: false,
