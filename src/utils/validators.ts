@@ -185,5 +185,23 @@ export function formatCardExpiry(text: string): string {
   return clean;
 }
 
+/** Mensajes literales de HU_EU_03_11 (criterios 3.1 y 3.2). */
+export const RESERVATION_CODE_REQUIRED_MESSAGE = 'Ingrese el número de reserva.';
+export const RESERVATION_CODE_INVALID_MESSAGE = 'El número de reserva no es válido.';
+
+/**
+ * Valida el número de reserva (criterios 3.1 y 3.2, RN-18).
+ * Obligatorio y con formato propuesto 'EU-' seguido de 6 caracteres alfanuméricos.
+ */
+export function validateReservationCode(text: string): string | null {
+  const trimmed = text.trim();
+  if (trimmed === '') return RESERVATION_CODE_REQUIRED_MESSAGE;
+  if (!/^EU-[A-Za-z0-9]{6}$/.test(trimmed)) {
+    return RESERVATION_CODE_INVALID_MESSAGE;
+  }
+  return null;
+}
+
+
 
 

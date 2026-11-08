@@ -20,6 +20,9 @@ import {
   CARD_NUMBER_INVALID_MESSAGE,
   CARD_EXPIRY_INVALID_MESSAGE,
   CARD_CVV_INVALID_MESSAGE,
+  validateReservationCode,
+  RESERVATION_CODE_REQUIRED_MESSAGE,
+  RESERVATION_CODE_INVALID_MESSAGE,
 } from '../src/utils/validators';
 
 describe('validateBudget (RN-19, criterios 3.1 y 3.2)', () => {
@@ -364,5 +367,44 @@ describe('formatCardNumber y formatCardExpiry', () => {
     expect(formatCardExpiry('1')).toBe('1');
   });
 });
+
+describe('validateReservationCode (HU_EU_03_11, criterios 3.1 y 3.2, RN-18)', () => {
+  it('coincide exactamente con los mensajes literales requeridos', () => {
+    expect(RESERVATION_CODE_REQUIRED_MESSAGE).toBe('Ingrese el número de reserva.');
+    expect(RESERVATION_CODE_INVALID_MESSAGE).toBe('El número de reserva no es válido.');
+  });
+
+  it.each(['', '   ', '\t', '\n'])('criterio 3.1: rechaza número vacío o solo espacios (%j)', (input) => {
+    expect(validateReservationCode(input)).toBe('Ingrese el número de reserva.');
+  });
+
+  it.each([
+    'EU-123', // menos de 6 caracteres
+    'EU-12345',
+    'EU-1234567', // más de 6 caracteres
+    '123456', // sin prefijo
+    'EU123456', // sin guion
+    'eu-8K9M2P', // prefijo en minúscula
+    'AB-8K9M2P', // prefijo incorrecto
+    'EU-123-56', // guiones adicionales
+    'EU-8K9M2!', // caracteres especiales
+    'EU-8K9M2 ', // espacio interior
+  ])('criterio 3.2: rechaza formato distinto de EU- más 6 caracteres alfanuméricos (%s)', (input) => {
+    expect(validateReservationCode(input)).toBe('El número de reserva no es válido.');
+  });
+
+  it.each([
+    'EU-8K9M2P',
+    'EU-ABC123',
+    'EU-000000',
+    'EU-ZZZZZZ',
+    'EU-abcdef',
+    'EU-a1b2c3',
+    '  EU-8K9M2P  ', // espacios externos recortados
+  ])('acepta números de reserva con formato propuesto válido (%s)', (input) => {
+    expect(validateReservationCode(input)).toBeNull();
+  });
+});
+
 
 
