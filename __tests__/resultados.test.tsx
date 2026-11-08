@@ -375,4 +375,388 @@ describe('ResultadosScreen (HU_EU_02_05 — T_HU_EU_02_05_2)', () => {
     expect(spy).toHaveBeenCalledTimes(3);
     expect(findByTestId(root.container, 'provider-card-prv-01')).toBeTruthy();
   });
+
+  describe('Casos tabulados de elegibilidad por invitados, precio Desde, paginación por scroll y estado vacío (T_HU_EU_02_05_4)', () => {
+    interface SeedProviderFixture {
+      provider: Omit<ProviderSummary, 'price_from_cop'>;
+      services: {
+        id: string;
+        price_model: 'fijo' | 'por_invitado';
+        unit_price_cop: number;
+        min_guests: number;
+        max_guests: number;
+        event_types: ('cumpleanos' | 'boda' | 'xv')[];
+      }[];
+    }
+
+    // Subconjunto representativo de la semilla de Cali y área metropolitana (BD §9.1 y §9.2)
+    const SEED_FIXTURES: SeedProviderFixture[] = [
+      {
+        provider: {
+          id: 'prv-terraza-san-antonio',
+          name: 'Terraza San Antonio',
+          categories: ['espacio'],
+          neighborhood: 'San Antonio',
+          municipality: 'Cali',
+          latitude: 3.447,
+          longitude: -76.54,
+          cover_url: 'https://picsum.photos/seed/terraza/600/400',
+          rating_avg: 4.3,
+          rating_count: 6,
+          verification_status: 'en_revision',
+          featured: false,
+        },
+        services: [
+          {
+            id: 'svc-terraza-ahor',
+            price_model: 'fijo',
+            unit_price_cop: 650_000,
+            min_guests: 15,
+            max_guests: 40,
+            event_types: ['cumpleanos'],
+          },
+          {
+            id: 'svc-terraza-equi',
+            price_model: 'fijo',
+            unit_price_cop: 1_200_000,
+            min_guests: 25,
+            max_guests: 80,
+            event_types: ['cumpleanos', 'boda'],
+          },
+        ],
+      },
+      {
+        provider: {
+          id: 'prv-salon-los-guaduales',
+          name: 'Salón Los Guaduales',
+          categories: ['espacio'],
+          neighborhood: 'Ciudad Jardín',
+          municipality: 'Cali',
+          latitude: 3.365,
+          longitude: -76.531,
+          cover_url: 'https://picsum.photos/seed/guaduales/600/400',
+          rating_avg: 4.8,
+          rating_count: 18,
+          verification_status: 'verificado',
+          featured: true,
+        },
+        services: [
+          {
+            id: 'svc-guaduales-equi',
+            price_model: 'fijo',
+            unit_price_cop: 1_600_000,
+            min_guests: 40,
+            max_guests: 120,
+            event_types: ['cumpleanos', 'xv'],
+          },
+          {
+            id: 'svc-guaduales-prem',
+            price_model: 'fijo',
+            unit_price_cop: 3_800_000,
+            min_guests: 80,
+            max_guests: 250,
+            event_types: ['boda', 'xv'],
+          },
+        ],
+      },
+      {
+        provider: {
+          id: 'prv-sabor-valluno',
+          name: 'Sabor Valluno Catering',
+          categories: ['alimentacion'],
+          neighborhood: 'Granada',
+          municipality: 'Cali',
+          latitude: 3.458,
+          longitude: -76.536,
+          cover_url: 'https://picsum.photos/seed/sabor/600/400',
+          rating_avg: 4.8,
+          rating_count: 11,
+          verification_status: 'verificado',
+          featured: true,
+        },
+        services: [
+          {
+            id: 'svc-sabor-ahor',
+            price_model: 'por_invitado',
+            unit_price_cop: 14_000,
+            min_guests: 20,
+            max_guests: 300,
+            event_types: ['cumpleanos', 'boda', 'xv'],
+          },
+          {
+            id: 'svc-sabor-equi',
+            price_model: 'por_invitado',
+            unit_price_cop: 24_000,
+            min_guests: 20,
+            max_guests: 300,
+            event_types: ['cumpleanos', 'boda', 'xv'],
+          },
+        ],
+      },
+      {
+        provider: {
+          id: 'prv-orquesta-canaveral',
+          name: 'Orquesta Cañaveral',
+          categories: ['entretenimiento'],
+          neighborhood: 'Cañasgordas',
+          municipality: 'Cali',
+          latitude: 3.352,
+          longitude: -76.538,
+          cover_url: null,
+          rating_avg: null,
+          rating_count: 0,
+          verification_status: 'verificado',
+          featured: false,
+        },
+        services: [
+          {
+            id: 'svc-orquesta-equi',
+            price_model: 'fijo',
+            unit_price_cop: 900_000,
+            min_guests: 1,
+            max_guests: 200,
+            event_types: ['boda'],
+          },
+          {
+            id: 'svc-orquesta-prem',
+            price_model: 'fijo',
+            unit_price_cop: 1_900_000,
+            min_guests: 1,
+            max_guests: 500,
+            event_types: ['cumpleanos', 'boda', 'xv'],
+          },
+        ],
+      },
+    ];
+
+    /**
+     * Simula el filtrado por capacidad/tipo de evento (RN-14), cálculo de price_from_cop (RN-15, RN-25)
+     * y orden determinista (RN-26: destacados primero, mejor calificación y menor id en empate).
+     */
+    function simulateBackendProviders(query: {
+      guests?: number;
+      event_type?: 'cumpleanos' | 'boda' | 'xv';
+    }): ProviderSummary[] {
+      const results: ProviderSummary[] = [];
+
+      for (const entry of SEED_FIXTURES) {
+        const eligible = entry.services.filter((s) => {
+          const matchesGuests =
+            query.guests === undefined ||
+            (query.guests >= s.min_guests && query.guests <= s.max_guests);
+          const matchesEvent =
+            query.event_type === undefined || s.event_types.includes(query.event_type);
+          return matchesGuests && matchesEvent;
+        });
+
+        if (eligible.length === 0) continue;
+
+        const costs = eligible.map((s) => {
+          if (s.price_model === 'fijo') return s.unit_price_cop;
+          const n = query.guests !== undefined ? query.guests : s.min_guests;
+          return Math.round(s.unit_price_cop * n);
+        });
+
+        results.push({
+          ...entry.provider,
+          price_from_cop: Math.min(...costs),
+        });
+      }
+
+      return results.sort((a, b) => {
+        if (a.featured !== b.featured) return a.featured ? -1 : 1;
+        const rA = a.rating_avg ?? -1;
+        const rB = b.rating_avg ?? -1;
+        if (rA !== rB) return rB - rA;
+        return a.id.localeCompare(b.id);
+      });
+    }
+
+    it.each([
+      {
+        caso: 'sin invitados ni tipo -> 4 proveedores; Sabor Valluno usa capacidad mínima (20 × $14.000 = $280.000) y Terraza usa el menor fijo ($650.000)',
+        guests: null,
+        eventType: null,
+        expectedIds: [
+          // Empate en featured=true y rating=4.8: 'prv-sabor-valluno' < 'prv-salon-los-guaduales'
+          'prv-sabor-valluno',
+          'prv-salon-los-guaduales',
+          'prv-terraza-san-antonio',
+          'prv-orquesta-canaveral',
+        ],
+        expectedPricesText: [
+          'Desde $280.000',
+          'Desde $1.600.000',
+          'Desde $650.000',
+          'Desde $900.000',
+        ],
+      },
+      {
+        caso: '30 invitados y cumpleaños -> excluye Salón Los Guaduales (mínimo 40); Sabor Valluno cuesta 30 × $14.000 = $420.000; Terraza cuesta $650.000',
+        guests: 30,
+        eventType: 'cumpleanos' as const,
+        expectedIds: [
+          'prv-sabor-valluno',
+          'prv-terraza-san-antonio',
+          'prv-orquesta-canaveral',
+        ],
+        expectedPricesText: [
+          'Desde $420.000',
+          'Desde $650.000',
+          'Desde $1.900.000', // el de $900.000 es solo boda
+        ],
+      },
+      {
+        caso: '100 invitados y boda -> excluye Terraza (máx 80); Salón Los Guaduales usa salón de boda ($3.800.000); Sabor Valluno cuesta 100 × $14.000 = $1.400.000',
+        guests: 100,
+        eventType: 'boda' as const,
+        expectedIds: [
+          'prv-sabor-valluno',
+          'prv-salon-los-guaduales',
+          'prv-orquesta-canaveral',
+        ],
+        expectedPricesText: [
+          'Desde $1.400.000',
+          'Desde $3.800.000',
+          'Desde $900.000',
+        ],
+      },
+      {
+        caso: '400 invitados y XV años -> solo Orquesta Cañaveral cubre hasta 500 invitados ($1.900.000)',
+        guests: 400,
+        eventType: 'xv' as const,
+        expectedIds: ['prv-orquesta-canaveral'],
+        expectedPricesText: ['Desde $1.900.000'],
+      },
+    ])(
+      'verifica elegibilidad por invitados, precio Desde y orden determinista: $caso (criterios 3.1, 3.2, 3.3 y 4)',
+      async ({ guests, eventType, expectedIds, expectedPricesText }) => {
+        const items = simulateBackendProviders({
+          guests: guests ?? undefined,
+          event_type: eventType ?? undefined,
+        });
+
+        const spy = jest.spyOn(endpoints, 'getProviders').mockResolvedValueOnce({
+          items,
+          total: items.length,
+          page: 1,
+          page_size: 10,
+        });
+
+        const root = createRoot();
+        await act(async () => {
+          root.render(
+            <FlowProvider>
+              <FlowHarness
+                initial={{
+                  guests,
+                  eventType,
+                  filters: {
+                    ...(guests !== null ? { guests } : {}),
+                    ...(eventType !== null ? { event_type: eventType } : {}),
+                  },
+                }}
+              />
+            </FlowProvider>,
+          );
+        });
+
+        await act(async () => {
+          press(findByTestId(root.container, 'seed-flow'));
+        });
+
+        expect(spy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            ...(guests !== null ? { guests } : {}),
+            ...(eventType !== null ? { event_type: eventType } : {}),
+            page: 1,
+            page_size: 10,
+          }),
+          expect.any(Object),
+        );
+
+        expect(textOf(findByTestId(root.container, 'results-count'))).toContain(
+          `${expectedIds.length} resultados`,
+        );
+
+        const renderedCardNodes = root.container.queryAll(
+          (n) =>
+            typeof n.props.testID === 'string' &&
+            n.props.testID.startsWith('provider-card-'),
+        );
+        const renderedIds = renderedCardNodes.map((n) =>
+          (n.props.testID as string).replace('provider-card-', ''),
+        );
+        expect(renderedIds).toEqual(expectedIds);
+
+        renderedCardNodes.forEach((cardNode, idx) => {
+          expect(textOf(cardNode)).toContain(expectedPricesText[idx]);
+        });
+      },
+    );
+
+    it('carga la siguiente página automáticamente al hacer scroll hasta el final y oculta el botón cuando ya se cargaron todos (criterio 5)', async () => {
+      const page1 = Array.from({ length: 10 }, (_, idx) => makeProvider(idx + 1));
+      const page2 = Array.from({ length: 6 }, (_, idx) => makeProvider(idx + 11));
+
+      const spy = jest
+        .spyOn(endpoints, 'getProviders')
+        .mockResolvedValueOnce({
+          items: page1,
+          total: 16,
+          page: 1,
+          page_size: 10,
+        })
+        .mockResolvedValueOnce({
+          items: page2,
+          total: 16,
+          page: 2,
+          page_size: 10,
+        });
+
+      const root = createRoot();
+      await act(async () => {
+        root.render(
+          <FlowProvider>
+            <ResultadosScreen />
+          </FlowProvider>,
+        );
+      });
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(findByTestId(root.container, 'btn-load-more')).toBeTruthy();
+
+      // Simular scroll cerca del final (distanceFromBottom = 50 <= 120)
+      const scrollView = findByTestId(root.container, 'results-scroll');
+      await act(async () => {
+        scrollView.props.onScroll({
+          nativeEvent: {
+            layoutMeasurement: { height: 600, width: 390 },
+            contentOffset: { y: 1150, x: 0 },
+            contentSize: { height: 1800, width: 390 },
+          },
+        });
+      });
+
+      expect(spy).toHaveBeenCalledTimes(2);
+      expect(spy).toHaveBeenLastCalledWith(
+        expect.objectContaining({ page: 2, page_size: 10 }),
+        expect.any(Object),
+      );
+      expect(findByTestId(root.container, 'provider-card-prv-16')).toBeTruthy();
+
+      // Al completar los 16 resultados, el botón de paginación desaparece y otro scroll no pide página 3
+      expect(() => findByTestId(root.container, 'btn-load-more')).toThrow();
+      await act(async () => {
+        scrollView.props.onScroll({
+          nativeEvent: {
+            layoutMeasurement: { height: 600, width: 390 },
+            contentOffset: { y: 2000, x: 0 },
+            contentSize: { height: 2500, width: 390 },
+          },
+        });
+      });
+      expect(spy).toHaveBeenCalledTimes(2);
+    });
+  });
 });

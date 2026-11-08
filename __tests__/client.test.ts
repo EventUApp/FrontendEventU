@@ -1,6 +1,6 @@
 import { ApiError, apiFetch, GENERIC_ERROR, NetworkError } from '../src/api/client';
-import { getHome, postRecommendations } from '../src/api/endpoints';
-import type { HomeResponse } from '../src/api/types';
+import { getHome, getProviders, postRecommendations } from '../src/api/endpoints';
+import type { HomeResponse, ProvidersResponse } from '../src/api/types';
 import { REQUEST_TIMEOUT_MS, SLOW_NOTICE_MS } from '../src/config/limits';
 
 jest.mock('../src/config/env', () => ({ API_BASE_URL: 'https://api.ejemplo.test' }));
@@ -246,6 +246,52 @@ describe('getHome (HU_EU_01_12 — T_HU_EU_01_12_4)', () => {
     await expect(getHome()).rejects.toMatchObject({
       status: 500,
       message: 'No fue posible completar la operación. Intente nuevamente.',
+    });
+  });
+});
+
+describe('getProviders (HU_EU_02_05 — T_HU_EU_02_05_4)', () => {
+  afterEach(() => jest.resetAllMocks());
+
+  it('envía query con category, event_type, guests, page y page_size a GET /api/v1/providers', async () => {
+    const mockProviders: ProvidersResponse = {
+      items: [],
+      total: 0,
+      page: 1,
+      page_size: 10,
+    };
+    g.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => mockProviders });
+
+    const res = await getProviders({
+      category: 'espacio',
+      event_type: 'boda',
+      guests: 120,
+      page: 1,
+      page_size: 10,
+    });
+
+    expect(res).toEqual(mockProviders);
+    const calledUrl = g.fetch.mock.calls[0][0] as string;
+    expect(calledUrl).toContain('https://api.ejemplo.test/api/v1/providers?');
+    expect(calledUrl).toContain('category=espacio');
+    expect(calledUrl).toContain('event_type=boda');
+    expect(calledUrl).toContain('guests=120');
+    expect(calledUrl).toContain('page=1');
+    expect(calledUrl).toContain('page_size=10');
+  });
+
+  it('propaga NetworkError y sanitiza errores 500 con mensaje genérico (criterio 6)', async () => {
+    g.fetch = jest.fn().mockRejectedValueOnce(new TypeError('Network failure'));
+    await expect(getProviders({ page: 1, page_size: 10 })).rejects.toBeInstanceOf(NetworkError);
+
+    g.fetch = jest.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: async () => ({ error: { code: 'INTERNAL_ERROR', message: 'db crash' } }),
+    });
+    await expect(getProviders({ page: 1, page_size: 10 })).rejects.toMatchObject({
+      status: 500,
+      message: GENERIC_ERROR,
     });
   });
 });
