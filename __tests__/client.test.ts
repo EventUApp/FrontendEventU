@@ -1,5 +1,6 @@
 import { ApiError, apiFetch, GENERIC_ERROR, NetworkError } from '../src/api/client';
-import { postRecommendations } from '../src/api/endpoints';
+import { getHome, postRecommendations } from '../src/api/endpoints';
+import type { HomeResponse } from '../src/api/types';
 import { REQUEST_TIMEOUT_MS, SLOW_NOTICE_MS } from '../src/config/limits';
 
 jest.mock('../src/config/env', () => ({ API_BASE_URL: 'https://api.ejemplo.test' }));
@@ -138,6 +139,113 @@ describe('postRecommendations (HU_EU_01_01)', () => {
         budget_cop: 'El presupuesto debe estar entre $1.000.000 y $50.000.000.',
         guests: 'Ingrese un número de invitados entre 1 y 500.',
       },
+    });
+  });
+});
+
+describe('getHome (HU_EU_01_12 — T_HU_EU_01_12_4)', () => {
+  afterEach(() => jest.resetAllMocks());
+
+  const mockHomeResponse: HomeResponse = {
+    categories: [
+      { category: 'espacio', count: 6 },
+      { category: 'alimentacion', count: 4 },
+      { category: 'decoracion', count: 3 },
+      { category: 'entretenimiento', count: 3 },
+    ],
+    featured: [
+      {
+        id: 'prv-atelier-del-evento',
+        name: 'Atelier del Evento',
+        categories: ['decoracion'],
+        neighborhood: 'El Peñón',
+        municipality: 'Cali',
+        latitude: 3.451,
+        longitude: -76.542,
+        cover_url: 'https://picsum.photos/seed/atelier/600/400',
+        rating_avg: 4.9,
+        rating_count: 15,
+        verification_status: 'verificado',
+        price_from_cop: 1_100_000,
+        featured: true,
+      },
+      {
+        id: 'prv-casa-quinta-pance',
+        name: 'Casa Quinta Pance',
+        categories: ['espacio'],
+        neighborhood: 'Pance',
+        municipality: 'Cali',
+        latitude: 3.321,
+        longitude: -76.535,
+        cover_url: 'https://picsum.photos/seed/pance/600/400',
+        rating_avg: 4.8,
+        rating_count: 12,
+        verification_status: 'verificado',
+        price_from_cop: 1_900_000,
+        featured: true,
+      },
+      {
+        id: 'prv-salon-los-guaduales',
+        name: 'Salón Los Guaduales',
+        categories: ['espacio'],
+        neighborhood: 'Ciudad Jardín',
+        municipality: 'Cali',
+        latitude: 3.365,
+        longitude: -76.531,
+        cover_url: 'https://picsum.photos/seed/guaduales/600/400',
+        rating_avg: 4.8,
+        rating_count: 9,
+        verification_status: 'verificado',
+        price_from_cop: 1_600_000,
+        featured: true,
+      },
+    ],
+  };
+
+  it('consulta GET /api/v1/home y devuelve conteo de los 4 rubros y destacados en orden RN-26', async () => {
+    g.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => mockHomeResponse });
+
+    const res = await getHome();
+
+    expect(g.fetch).toHaveBeenCalledWith(
+      'https://api.ejemplo.test/api/v1/home',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(res.categories).toHaveLength(4);
+    expect(res.featured).toHaveLength(3);
+
+    // Verifica orden RN-26: destacados primero, luego mayor rating_avg y empate por menor id
+    for (let i = 1; i < res.featured.length; i++) {
+      const prev = res.featured[i - 1];
+      const curr = res.featured[i];
+      expect(prev.featured).toBe(true);
+      expect(curr.featured).toBe(true);
+      const prevRating = prev.rating_avg ?? -1;
+      const currRating = curr.rating_avg ?? -1;
+      expect(prevRating).toBeGreaterThanOrEqual(currRating);
+      if (prevRating === currRating) {
+        expect(prev.id.localeCompare(curr.id)).toBeLessThan(0);
+      }
+    }
+  });
+
+  it('lanza NetworkError si falla la red al consultar GET /home (criterio 6)', async () => {
+    g.fetch = jest.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+    await expect(getHome()).rejects.toBeInstanceOf(NetworkError);
+  });
+
+  it('lanza ApiError con mensaje genérico si GET /home responde 500 (criterio 6)', async () => {
+    g.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({
+        error: { code: 'INTERNAL_ERROR', message: 'SQLAlchemy OperationalError' },
+      }),
+    });
+
+    await expect(getHome()).rejects.toMatchObject({
+      status: 500,
+      message: 'No fue posible completar la operación. Intente nuevamente.',
     });
   });
 });

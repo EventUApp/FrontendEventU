@@ -98,14 +98,25 @@ describe('validateEventDate (RN-20, HU_EU_01_12 criterio 3.3)', () => {
     '2026-11-07', // hoy (no posterior)
     '2026-11-06', // ayer
     '2025-01-01', // año anterior
+    '2026-02-29', // 2026 no es bisiesto
     '2026-02-30', // fecha inexistente
+    '2026-04-31', // abril tiene 30 días
+    '2026-13-01', // mes 13 inexistente
+    '2026-00-10', // mes 0 inexistente
     '07/11/2027', // formato inválido
+    '2027-1-5', // sin ceros a la izquierda
     'no-es-fecha',
   ])('rechaza fecha igual o anterior a hoy o con formato inválido (%s)', (input) => {
     expect(validateEventDate(input, { optional: true, today: TODAY })).toBe(EXPECTED_MSG);
   });
 
-  it.each(['2026-11-08', '2026-12-15', '2027-05-20', ' 2027-01-01 '])(
+  it.each([
+    '2026-11-08', // mañana (borde inferior válido)
+    '2026-12-15',
+    '2027-05-20',
+    '2028-02-29', // año bisiesto válido
+    ' 2027-01-01 ',
+  ])(
     'acepta fecha posterior a hoy (%s)',
     (input) => {
       expect(validateEventDate(input, { optional: true, today: TODAY })).toBeNull();
