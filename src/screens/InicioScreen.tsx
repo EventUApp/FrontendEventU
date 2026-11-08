@@ -592,9 +592,9 @@ export default function InicioScreen() {
                     </Text>
                   </View>
 
-                  {provider.categories.length > 0 ? (
+                  {(provider.categories?.length ?? 0) > 0 ? (
                     <View style={styles.featuredTagsRow}>
-                      {provider.categories.map((cat) => (
+                      {provider.categories?.map((cat) => (
                         <View key={cat} style={styles.featuredTag}>
                           <Text style={styles.featuredTagText}>
                             {CATEGORY_LABELS[cat] ?? cat}
