@@ -629,4 +629,193 @@ describe('InicioScreen (HU_EU_01_12 — T_HU_EU_01_12_1)', () => {
     const badge = findByTestId(root.container, 'tab-badge-MiEvento');
     expect(textOf(badge)).toBe('1');
   });
+
+  describe('Casos tabulados del buscador, categorías y orden RN-26 (T_HU_EU_01_12_4)', () => {
+    it.each([
+      {
+        caso: 'todo vacío (sin tipo ni invitados, fecha vacía opcional)',
+        eventType: null,
+        guests: '',
+        date: '',
+        expectedErrors: [
+          'Seleccione el tipo de evento.',
+          'Ingrese un número de invitados entre 1 y 500.',
+        ],
+        unexpectedErrors: ['Seleccione una fecha posterior a hoy.'],
+      },
+      {
+        caso: 'tipo seleccionado pero invitados en 0 y fecha pasada',
+        eventType: 'cumpleanos' as const,
+        guests: '0',
+        date: '2020-05-10',
+        expectedErrors: [
+          'Ingrese un número de invitados entre 1 y 500.',
+          'Seleccione una fecha posterior a hoy.',
+        ],
+        unexpectedErrors: ['Seleccione el tipo de evento.'],
+      },
+      {
+        caso: 'tipo e invitados válidos (1) pero fecha con formato inválido',
+        eventType: 'boda' as const,
+        guests: '1',
+        date: '31/12/2027',
+        expectedErrors: ['Seleccione una fecha posterior a hoy.'],
+        unexpectedErrors: [
+          'Seleccione el tipo de evento.',
+          'Ingrese un número de invitados entre 1 y 500.',
+        ],
+      },
+      {
+        caso: 'tipo y fecha futura válidos pero invitados mayor a 500 (501)',
+        eventType: 'xv' as const,
+        guests: '501',
+        date: '2027-10-15',
+        expectedErrors: ['Ingrese un número de invitados entre 1 y 500.'],
+        unexpectedErrors: [
+          'Seleccione el tipo de evento.',
+          'Seleccione una fecha posterior a hoy.',
+        ],
+      },
+      {
+        caso: 'invitados no numérico (texto)',
+        eventType: 'cumpleanos' as const,
+        guests: 'ochenta',
+        date: '',
+        expectedErrors: ['Ingrese un número de invitados entre 1 y 500.'],
+        unexpectedErrors: [
+          'Seleccione el tipo de evento.',
+          'Seleccione una fecha posterior a hoy.',
+        ],
+      },
+    ])(
+      'valida en el buscador: $caso (criterios 3.1 a 3.3, 4 y 6)',
+      async ({ eventType, guests, date, expectedErrors, unexpectedErrors }) => {
+        const homeSpy = jest.spyOn(endpoints, 'getHome').mockResolvedValueOnce(SAMPLE_HOME);
+
+        const root = createRoot();
+        await act(async () => {
+          root.render(
+            <FlowProvider>
+              <InicioScreen />
+            </FlowProvider>,
+          );
+        });
+
+        await act(async () => {
+          if (eventType) {
+            press(findByTestId(root.container, `option-${eventType}`));
+          }
+          findByTestId(root.container, 'input-guests').props.onChangeText(guests);
+          findByTestId(root.container, 'input-date').props.onChangeText(date);
+        });
+
+        await act(async () => {
+          press(findByTestId(root.container, 'btn-search'));
+        });
+
+        const texts = findAllText(root.container);
+        for (const err of expectedErrors) {
+          expect(texts).toContain(err);
+        }
+        for (const notErr of unexpectedErrors) {
+          expect(texts).not.toContain(notErr);
+        }
+        expect(mockNavigate).not.toHaveBeenCalled();
+        // La búsqueda no guarda datos en el servidor (solo se llamó GET /home al montar)
+        expect(homeSpy).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it.each([
+      { eventType: 'cumpleanos' as const, guests: '1', date: '' },
+      { eventType: 'boda' as const, guests: '500', date: '2027-11-20' },
+      { eventType: 'xv' as const, guests: '150', date: '   ' },
+    ])(
+      'acepta búsqueda válida con bordes ($eventType, invitados=$guests, fecha="$date") sin guardar en servidor (criterios 3, 4 y 5)',
+      async ({ eventType, guests, date }) => {
+        const homeSpy = jest.spyOn(endpoints, 'getHome').mockResolvedValueOnce(SAMPLE_HOME);
+
+        const root = createRoot();
+        await act(async () => {
+          root.render(
+            <FlowProvider>
+              <InicioScreen />
+            </FlowProvider>,
+          );
+        });
+
+        await act(async () => {
+          press(findByTestId(root.container, `option-${eventType}`));
+          findByTestId(root.container, 'input-guests').props.onChangeText(guests);
+          findByTestId(root.container, 'input-date').props.onChangeText(date);
+        });
+
+        await act(async () => {
+          press(findByTestId(root.container, 'btn-search'));
+        });
+
+        expect(mockNavigate).toHaveBeenCalledWith('Resultados', {
+          eventType,
+          guests: Number(guests),
+          date: date.trim() || undefined,
+        });
+        expect(homeSpy).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it.each(['espacio', 'alimentacion', 'decoracion', 'entretenimiento'] as const)(
+      'tocar la categoría %s abre Resultados filtrado por ese rubro sin llenar el buscador (criterios 2.2, 4 y 5)',
+      async (category) => {
+        jest.spyOn(endpoints, 'getHome').mockResolvedValueOnce(SAMPLE_HOME);
+
+        const root = createRoot();
+        await act(async () => {
+          root.render(
+            <FlowProvider>
+              <FlowHarness />
+            </FlowProvider>,
+          );
+        });
+
+        await act(async () => {
+          press(findByTestId(root.container, `category-${category}`));
+        });
+
+        expect(mockNavigate).toHaveBeenCalledWith('Resultados', { category });
+        expect(getFlowSnapshot(root.container).filters.category).toBe(category);
+      },
+    );
+
+    it('respeta en pantalla el orden RN-26 de los proveedores destacados devueltos por GET /home (criterio 5)', async () => {
+      const orderedHome: HomeResponse = {
+        categories: SAMPLE_HOME.categories,
+        featured: [
+          makeProvider(1, { id: 'prv-a', name: 'Primero 4.9', rating_avg: 4.9, rating_count: 10 }),
+          makeProvider(2, { id: 'prv-b', name: 'Segundo 4.8 A', rating_avg: 4.8, rating_count: 8 }),
+          makeProvider(3, { id: 'prv-c', name: 'Tercero 4.8 B', rating_avg: 4.8, rating_count: 15 }),
+          makeProvider(4, { id: 'prv-d', name: 'Cuarto Sin Reseñas', rating_avg: null, rating_count: 0 }),
+        ],
+      };
+      jest.spyOn(endpoints, 'getHome').mockResolvedValueOnce(orderedHome);
+
+      const root = createRoot();
+      await act(async () => {
+        root.render(
+          <FlowProvider>
+            <InicioScreen />
+          </FlowProvider>,
+        );
+      });
+
+      const renderedNames = root.container
+        .queryAll((n) => typeof n.props.testID === 'string' && n.props.testID.startsWith('featured-prv-'))
+        .map((card) => textOf(card));
+
+      expect(renderedNames).toHaveLength(4);
+      expect(renderedNames[0]).toContain('Primero 4.9');
+      expect(renderedNames[1]).toContain('Segundo 4.8 A');
+      expect(renderedNames[2]).toContain('Tercero 4.8 B');
+      expect(renderedNames[3]).toContain('Cuarto Sin Reseñas');
+    });
+  });
 });
