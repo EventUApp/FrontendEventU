@@ -1,5 +1,6 @@
-import { ApiError, apiFetch, NetworkError } from '../src/api/client';
+import { ApiError, apiFetch, GENERIC_ERROR, NetworkError } from '../src/api/client';
 import { postRecommendations } from '../src/api/endpoints';
+import { REQUEST_TIMEOUT_MS, SLOW_NOTICE_MS } from '../src/config/limits';
 
 jest.mock('../src/config/env', () => ({ API_BASE_URL: 'https://api.ejemplo.test' }));
 
@@ -37,6 +38,55 @@ describe('apiFetch', () => {
   it('lanza NetworkError si no hay conexión', async () => {
     g.fetch = jest.fn().mockRejectedValue(new TypeError('Network request failed'));
     await expect(apiFetch('/health')).rejects.toBeInstanceOf(NetworkError);
+  });
+
+  it('invoca onSlow tras SLOW_NOTICE_MS (5 s) y aborta con NetworkError al agotar el tiempo de espera (60 s, HU_EU_01_04)', async () => {
+    jest.useFakeTimers();
+    try {
+      const onSlow = jest.fn();
+      g.fetch = jest.fn().mockImplementation((_url: string, init: { signal?: AbortSignal }) => {
+        return new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => {
+            reject(new Error('Aborted'));
+          });
+        });
+      });
+
+      const promise = apiFetch('/health', { onSlow });
+
+      jest.advanceTimersByTime(SLOW_NOTICE_MS - 1);
+      expect(onSlow).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(1);
+      expect(onSlow).toHaveBeenCalledTimes(1);
+
+      jest.advanceTimersByTime(REQUEST_TIMEOUT_MS - SLOW_NOTICE_MS);
+      await expect(promise).rejects.toMatchObject({
+        name: 'NetworkError',
+        message: 'No hay conexión con el servidor. Revise su conexión e intente nuevamente.',
+      });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('usa siempre el mensaje genérico ante errores 5xx sin exponer trazas ni detalles técnicos (RF-GEN-03, RF-GEN-06)', async () => {
+    g.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Traceback (most recent call last): psycopg2.OperationalError...',
+        },
+      }),
+    });
+
+    await expect(apiFetch('/health')).rejects.toMatchObject({
+      status: 500,
+      code: 'INTERNAL_ERROR',
+      message: GENERIC_ERROR,
+    });
   });
 });
 

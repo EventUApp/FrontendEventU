@@ -1,11 +1,13 @@
 import React, { createContext, useContext, useMemo, useState } from 'react';
-import type { CartService, Customer, EventType, Modality, Package } from '../api/types';
+import type { CartService, Customer, EventType, Modality, Package, ProvidersQuery } from '../api/types';
 
 /** Estado del flujo del marketplace. Volver atrás no lo borra (RF-GEN-06). */
 export interface FlowState {
   budgetCop: number | null;
   eventType: EventType | null;
   guests: number | null;
+  /** Filtros y orden activos del listado de proveedores (HU_EU_01_04, HU_EU_02_15). */
+  filters: ProvidersQuery;
   packages: Package[];
   chosenModality: Modality | null;
   chosenServiceIds: string[];
@@ -22,6 +24,7 @@ export const initialFlow: FlowState = {
   budgetCop: null,
   eventType: null,
   guests: null,
+  filters: {},
   packages: [],
   chosenModality: null,
   chosenServiceIds: [],
