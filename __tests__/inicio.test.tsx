@@ -1,9 +1,10 @@
 import React, { act } from 'react';
-import { Pressable, Text } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { createRoot, type TestInstance } from 'test-renderer';
 import { ApiError, NetworkError } from '../src/api/client';
 import * as endpoints from '../src/api/endpoints';
 import type { HomeResponse, ProviderSummary } from '../src/api/types';
+import { RootNavigator } from '../src/navigation/RootNavigator';
 import InicioScreen from '../src/screens/InicioScreen';
 import { FlowProvider, useFlow, type FlowState } from '../src/state/FlowContext';
 
@@ -14,6 +15,115 @@ jest.mock('@react-navigation/native', () => ({
     navigate: mockNavigate,
   }),
 }));
+
+type MockTabScreenProps = {
+  name: string;
+  component: React.ComponentType;
+  options?: {
+    title?: string;
+    tabBarButtonTestID?: string;
+    tabBarBadge?: number | string;
+  };
+};
+
+type MockStackScreenProps = {
+  name: string;
+  component: React.ComponentType;
+};
+
+jest.mock('@react-navigation/bottom-tabs', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const ReactMock = require('react') as typeof React;
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { Pressable: MockPressable, Text: MockText, View: MockView } = require('react-native') as {
+    Pressable: typeof Pressable;
+    Text: typeof Text;
+    View: typeof View;
+  };
+
+  function Navigator({
+    initialRouteName,
+    children,
+  }: {
+    initialRouteName?: string;
+    children: React.ReactNode;
+  }) {
+    const screens = ReactMock.Children.toArray(
+      children,
+    ) as React.ReactElement<MockTabScreenProps>[];
+    const [activeTab, setActiveTab] = ReactMock.useState<string>(
+      initialRouteName ?? screens[0]?.props.name ?? 'Inicio',
+    );
+    const current = screens.find((s) => s.props.name === activeTab) ?? screens[0];
+    const ActiveComponent = current?.props.component;
+
+    return (
+      <MockView testID="bottom-tab-navigator">
+        <MockView testID="bottom-tab-content">
+          {ActiveComponent ? <ActiveComponent /> : null}
+        </MockView>
+        <MockView testID="bottom-tab-bar" accessibilityRole="tablist">
+          {screens.map((screen) => {
+            const { name, options } = screen.props;
+            const label = options?.title ?? name;
+            const selected = name === activeTab;
+            return (
+              <MockPressable
+                key={name}
+                testID={options?.tabBarButtonTestID ?? `tab-${name}`}
+                accessibilityRole="tab"
+                accessibilityState={{ selected }}
+                onPress={() => setActiveTab(name)}
+              >
+                <MockText>{label}</MockText>
+                {options?.tabBarBadge !== undefined ? (
+                  <MockText testID={`tab-badge-${name}`}>{String(options.tabBarBadge)}</MockText>
+                ) : null}
+              </MockPressable>
+            );
+          })}
+        </MockView>
+      </MockView>
+    );
+  }
+
+  function Screen(_props: MockTabScreenProps) {
+    return null;
+  }
+
+  return {
+    createBottomTabNavigator: () => ({ Navigator, Screen }),
+  };
+});
+
+jest.mock('@react-navigation/native-stack', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const ReactMock = require('react') as typeof React;
+
+  function Navigator({
+    initialRouteName,
+    children,
+  }: {
+    initialRouteName?: string;
+    children: React.ReactNode;
+  }) {
+    const screens = ReactMock.Children.toArray(
+      children,
+    ) as React.ReactElement<MockStackScreenProps>[];
+    const initial =
+      screens.find((s) => s.props.name === initialRouteName) ?? screens[0];
+    const InitialComponent = initial?.props.component;
+    return InitialComponent ? <InitialComponent /> : null;
+  }
+
+  function Screen(_props: MockStackScreenProps) {
+    return null;
+  }
+
+  return {
+    createNativeStackNavigator: () => ({ Navigator, Screen }),
+  };
+});
 
 function textOf(node: TestInstance): string {
   return node.children
@@ -403,5 +513,120 @@ describe('InicioScreen (HU_EU_01_12 — T_HU_EU_01_12_1)', () => {
 
     expect(spy).toHaveBeenCalledTimes(3);
     expect(findAllText(root.container)).toContain('Proveedor Destacado 1');
+  });
+
+  it('ofrece las 4 pestañas inferiores (Inicio, Resultados, Mi evento, Reservas) y conserva los datos ingresados al cambiar entre pestañas (T_HU_EU_01_12_3, criterios 1, 2.6 y 4)', async () => {
+    jest.spyOn(endpoints, 'getHome').mockResolvedValue(SAMPLE_HOME);
+
+    const root = createRoot();
+    await act(async () => {
+      root.render(
+        <FlowProvider>
+          <RootNavigator />
+        </FlowProvider>,
+      );
+    });
+
+    // Criterio 2.6: las 4 pestañas existen con sus rótulos literales y 'Inicio' está activa al abrir la app
+    const tabInicio = findByTestId(root.container, 'tab-Inicio');
+    const tabResultados = findByTestId(root.container, 'tab-Resultados');
+    const tabMiEvento = findByTestId(root.container, 'tab-MiEvento');
+    const tabReservas = findByTestId(root.container, 'tab-Reservas');
+
+    expect(textOf(tabInicio)).toContain('Inicio');
+    expect(textOf(tabResultados)).toContain('Resultados');
+    expect(textOf(tabMiEvento)).toContain('Mi evento');
+    expect(textOf(tabReservas)).toContain('Reservas');
+    expect(tabInicio.props.accessibilityState).toMatchObject({ selected: true });
+
+    // Ingresar datos en el buscador de Inicio: tipo 'XV años', fecha '2027-09-18' e invitados '180'
+    await act(async () => {
+      press(findByTestId(root.container, 'option-xv'));
+      findByTestId(root.container, 'input-date').props.onChangeText('2027-09-18');
+      findByTestId(root.container, 'input-guests').props.onChangeText('180');
+    });
+
+    // Cambiar por todas las pestañas inferiores: Resultados -> Mi evento -> Reservas -> volver a Inicio
+    await act(async () => {
+      press(tabResultados);
+    });
+    expect(findByTestId(root.container, 'tab-Resultados').props.accessibilityState).toMatchObject({
+      selected: true,
+    });
+
+    await act(async () => {
+      press(tabMiEvento);
+    });
+    expect(findByTestId(root.container, 'tab-MiEvento').props.accessibilityState).toMatchObject({
+      selected: true,
+    });
+
+    await act(async () => {
+      press(tabReservas);
+    });
+    expect(findByTestId(root.container, 'tab-Reservas').props.accessibilityState).toMatchObject({
+      selected: true,
+    });
+
+    // Volver a la pestaña 'Inicio' y comprobar que los datos ingresados no se borraron (criterio 4)
+    await act(async () => {
+      press(findByTestId(root.container, 'tab-Inicio'));
+    });
+
+    expect(findByTestId(root.container, 'option-xv').props.accessibilityState).toMatchObject({
+      selected: true,
+    });
+    expect(findByTestId(root.container, 'input-date').props.value).toBe('2027-09-18');
+    expect(findByTestId(root.container, 'input-guests').props.value).toBe('180');
+  });
+
+  it('muestra el contador de servicios en la pestaña Mi evento cuando hay servicios agregados en el carrito (criterios 2.5 y 2.6)', async () => {
+    jest.spyOn(endpoints, 'getHome').mockResolvedValue(SAMPLE_HOME);
+
+    function SeedAndRenderNav() {
+      const { update } = useFlow();
+      const [ready, setReady] = React.useState(false);
+      return !ready ? (
+        <Pressable
+          testID="seed-nav-cart"
+          onPress={() => {
+            update({
+              cart: [
+                {
+                  service_id: 'svc-1',
+                  name: 'Salón Imperial',
+                  category: 'espacio',
+                  provider_id: 'prov-1',
+                  provider_name: 'Hacienda Real',
+                  price_model: 'fijo',
+                  unit_price_cop: 2000000,
+                  min_guests: 20,
+                  max_guests: 200,
+                },
+              ],
+            });
+            setReady(true);
+          }}
+        />
+      ) : (
+        <RootNavigator />
+      );
+    }
+
+    const root = createRoot();
+    await act(async () => {
+      root.render(
+        <FlowProvider>
+          <SeedAndRenderNav />
+        </FlowProvider>,
+      );
+    });
+
+    await act(async () => {
+      press(findByTestId(root.container, 'seed-nav-cart'));
+    });
+
+    const badge = findByTestId(root.container, 'tab-badge-MiEvento');
+    expect(textOf(badge)).toBe('1');
   });
 });
