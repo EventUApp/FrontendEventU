@@ -1,10 +1,16 @@
 import { BUDGET_MAX_COP, BUDGET_MIN_COP, GUESTS_MAX, GUESTS_MIN } from '../src/config/limits';
 import {
+  EMAIL_INVALID_MESSAGE,
+  NAME_REQUIRED_MESSAGE,
+  PHONE_INVALID_MESSAGE,
   PRICE_MIN_GREATER_THAN_MAX_MESSAGE,
   validateBudget,
+  validateEmail,
   validateEventDate,
   validateEventType,
   validateGuests,
+  validateName,
+  validatePhone,
   validatePriceRange,
 } from '../src/utils/validators';
 
@@ -157,3 +163,83 @@ describe('validatePriceRange (HU_EU_02_15, criterios 2.3, 3.1 y 3.2)', () => {
     expect(validatePriceRange(min, max)).toBe('El precio mínimo no puede ser mayor que el máximo.');
   });
 });
+
+describe('validateName (HU_EU_03_09, criterio 3.1)', () => {
+  it('coincide exactamente con la constante NAME_REQUIRED_MESSAGE', () => {
+    expect(NAME_REQUIRED_MESSAGE).toBe('Ingrese su nombre.');
+  });
+
+  it.each(['', '   ', '\t', '\n'])('rechaza nombre vacío o solo espacios (%j)', (input) => {
+    expect(validateName(input)).toBe('Ingrese su nombre.');
+  });
+
+  it.each([
+    'María Pérez',
+    'Juan Carlos Gómez',
+    'Ana',
+    'Jean Paul',
+    'David R.',
+  ])('acepta nombres válidos (%s)', (name) => {
+    expect(validateName(name)).toBeNull();
+  });
+});
+
+describe('validateEmail (HU_EU_03_09, criterio 3.2)', () => {
+  it('coincide exactamente con la constante EMAIL_INVALID_MESSAGE', () => {
+    expect(EMAIL_INVALID_MESSAGE).toBe('Ingrese un correo electrónico válido.');
+  });
+
+  it.each([
+    '',
+    '   ',
+    'sin-arroba',
+    'usuario@',
+    '@dominio.com',
+    'usuario@dominio',
+    'usuario@dominio.',
+    'usuario con espacios@dominio.com',
+    'usuario@dominio com',
+  ])('rechaza formatos inválidos de correo (%j)', (input) => {
+    expect(validateEmail(input)).toBe('Ingrese un correo electrónico válido.');
+  });
+
+  it.each([
+    'cliente@ejemplo.com',
+    'maria.perez@dominio.co',
+    'organizador123@eventu.app',
+    'juan_carlos@empresa.com.co',
+  ])('acepta correos electrónicos con formato válido (%s)', (email) => {
+    expect(validateEmail(email)).toBeNull();
+  });
+});
+
+describe('validatePhone (HU_EU_03_09, criterio 3.3)', () => {
+  it('coincide exactamente con la constante PHONE_INVALID_MESSAGE', () => {
+    expect(PHONE_INVALID_MESSAGE).toBe('Ingrese un teléfono de 10 dígitos.');
+  });
+
+  it.each([
+    '',
+    '   ',
+    '123',
+    '123456789', // 9 dígitos
+    '12345678901', // 11 dígitos
+    '300123456a', // contiene letras
+    '300-123456', // contiene guiones
+    '+573001234567', // contiene prefijo con '+'
+    '300 123 456',
+  ])('rechaza teléfonos distintos de 10 dígitos numéricos (%j)', (input) => {
+    expect(validatePhone(input)).toBe('Ingrese un teléfono de 10 dígitos.');
+  });
+
+  it.each([
+    '3001234567',
+    '3109876543',
+    '3201122334',
+    '3155554321',
+    '6023334455',
+  ])('acepta teléfonos de exactamente 10 dígitos numéricos (%s)', (phone) => {
+    expect(validatePhone(phone)).toBeNull();
+  });
+});
+

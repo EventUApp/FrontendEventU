@@ -6,8 +6,17 @@ import {
   getProviders,
   postQuote,
   postRecommendations,
+  postReservation,
 } from '../src/api/endpoints';
-import type { CatalogItem, HomeResponse, Provider, ProvidersResponse, Quote } from '../src/api/types';
+import type {
+  CatalogItem,
+  HomeResponse,
+  Provider,
+  ProvidersResponse,
+  Quote,
+  Reservation,
+  ReservationRequest,
+} from '../src/api/types';
 import { REQUEST_TIMEOUT_MS, SLOW_NOTICE_MS } from '../src/config/limits';
 
 jest.mock('../src/config/env', () => ({ API_BASE_URL: 'https://api.ejemplo.test' }));
@@ -597,3 +606,134 @@ describe('getProvider (HU_EU_02_08 — T_HU_EU_02_08_3)', () => {
     });
   });
 });
+
+describe('postReservation (HU_EU_03_09, ADR-09, SAD §7.1)', () => {
+  afterEach(() => jest.resetAllMocks());
+
+  const sampleReq: ReservationRequest = {
+    budget_cop: 5_000_000,
+    event_type: 'boda',
+    guests: 80,
+    modality: 'personalizado',
+    service_ids: ['svc-esp-1', 'svc-ali-1', 'svc-dec-1'],
+    expected_total_cop: 4_500_000,
+    customer: {
+      name: 'María Pérez',
+      email: 'maria@ejemplo.com',
+      phone: '3001234567',
+    },
+    event_date: '2026-12-15',
+  };
+
+  const sampleReservation: Reservation = {
+    code: 'EU-ABC123',
+    status: 'creada',
+    total_cop: 4_500_000,
+    items: [
+      {
+        service_id: 'svc-esp-1',
+        name: 'Hacienda Campestre',
+        provider_id: 'prv-1',
+        provider_name: 'Haciendas Cali',
+        verification_status: 'verificado',
+        cost_cop: 2_000_000,
+      },
+    ],
+    customer: sampleReq.customer,
+    event_date: '2026-12-15',
+  };
+
+  it('crea reserva con código y estado creada (201, criterios 4 y 5)', async () => {
+    g.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => sampleReservation,
+    });
+
+    const res = await postReservation(sampleReq);
+
+    expect(g.fetch).toHaveBeenCalledTimes(1);
+    const [url, init] = g.fetch.mock.calls[0];
+    expect(url).toBe('https://api.ejemplo.test/api/v1/reservations');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toEqual(sampleReq);
+    expect(res.code).toBe('EU-ABC123');
+    expect(res.status).toBe('creada');
+    expect(res.total_cop).toBe(4_500_000);
+  });
+
+  it('permite crear reserva sin presupuesto cuando budget_cop es omitido (RN-22)', async () => {
+    const { budget_cop: _, ...reqWithoutBudget } = sampleReq;
+    g.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => sampleReservation,
+    });
+
+    const res = await postReservation(reqWithoutBudget);
+
+    expect(res.code).toBe('EU-ABC123');
+    const [, init] = g.fetch.mock.calls[0];
+    expect(JSON.parse(init.body).budget_cop).toBeUndefined();
+  });
+
+  it('propaga 409 TOTAL_MISMATCH si el total cambió en el catálogo (criterio 3.5 y 6)', async () => {
+    g.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        error: {
+          code: 'TOTAL_MISMATCH',
+          message: 'El total de los servicios ha cambiado.',
+        },
+      }),
+    });
+
+    await expect(postReservation(sampleReq)).rejects.toMatchObject({
+      status: 409,
+      code: 'TOTAL_MISMATCH',
+    });
+  });
+
+  it('propaga 409 BUDGET_EXCEEDED si el total excede el presupuesto (criterio 3.5 y 6)', async () => {
+    g.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        error: {
+          code: 'BUDGET_EXCEEDED',
+          message: 'El costo total supera el presupuesto.',
+        },
+      }),
+    });
+
+    await expect(postReservation(sampleReq)).rejects.toMatchObject({
+      status: 409,
+      code: 'BUDGET_EXCEEDED',
+    });
+  });
+
+  it('propaga 422 VALIDATION_ERROR si faltan rubros obligatorios o campos inválidos (criterio 6)', async () => {
+    g.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: async () => ({
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Falta un rubro obligatorio.',
+        },
+      }),
+    });
+
+    await expect(postReservation(sampleReq)).rejects.toMatchObject({
+      status: 422,
+      code: 'VALIDATION_ERROR',
+    });
+  });
+
+  it('propaga NetworkError ante fallos de conexión (criterio 6, HU_EU_01_04)', async () => {
+    g.fetch = jest.fn().mockRejectedValue(new TypeError('Network request failed'));
+    await expect(postReservation(sampleReq)).rejects.toBeInstanceOf(NetworkError);
+  });
+});
+

@@ -634,7 +634,9 @@ describe('HU_EU_02_13 — T_HU_EU_02_13_3: Conservación del carrito y estado de
 
   function MultiScreenNavigationHarness() {
     const { flow, update, addToCart } = useFlow();
-    const [currentRoute, setCurrentRoute] = React.useState<'Ficha' | 'MiEvento' | 'Catalogo'>('Ficha');
+    const [currentRoute, setCurrentRoute] = React.useState<
+      'Ficha' | 'MiEvento' | 'Catalogo' | 'DatosCliente'
+    >('Ficha');
 
     return (
       <>
@@ -642,6 +644,7 @@ describe('HU_EU_02_13 — T_HU_EU_02_13_3: Conservación del carrito y estado de
         <Pressable testID="go-to-ficha" onPress={() => setCurrentRoute('Ficha')} />
         <Pressable testID="go-to-mievento" onPress={() => setCurrentRoute('MiEvento')} />
         <Pressable testID="go-to-catalogo" onPress={() => setCurrentRoute('Catalogo')} />
+        <Pressable testID="go-to-datos-cliente" onPress={() => setCurrentRoute('DatosCliente')} />
 
         {/* Acciones en pantalla Ficha */}
         <Pressable
@@ -667,6 +670,21 @@ describe('HU_EU_02_13 — T_HU_EU_02_13_3: Conservación del carrito y estado de
               guests: 120,
               eventDate: '2027-10-15',
               budgetCop: 10_000_000,
+            })
+          }
+        />
+
+        {/* Acciones dentro de DatosCliente */}
+        <Pressable
+          testID="btn-set-customer"
+          onPress={() =>
+            update({
+              customer: {
+                name: 'Juan Carlos',
+                email: 'jc@ejemplo.com',
+                phone: '3001234567',
+              },
+              eventDate: '2027-11-20',
             })
           }
         />
@@ -806,4 +824,69 @@ describe('HU_EU_02_13 — T_HU_EU_02_13_3: Conservación del carrito y estado de
     expect(state.cartOrigin).toBe('personalizado');
     expect(state.cart).toHaveLength(3);
   });
+
+  it('los datos del cliente y de la reserva se conservan al navegar entre MiEvento y DatosCliente (RF-GEN-01, Criterio 4)', () => {
+    const root = createRoot();
+    act(() => {
+      root.render(
+        <FlowProvider>
+          <MultiScreenNavigationHarness />
+        </FlowProvider>,
+      );
+    });
+
+    // 1. Iniciar evento y cargar servicios
+    act(() => {
+      press(findByTestId(root.container, 'btn-init-event'));
+      press(findByTestId(root.container, 'btn-add-space'));
+      press(findByTestId(root.container, 'btn-add-food'));
+      press(findByTestId(root.container, 'btn-add-deco'));
+    });
+
+    // 2. Navegar a DatosCliente y fijar datos del cliente
+    act(() => {
+      press(findByTestId(root.container, 'go-to-datos-cliente'));
+    });
+    expect(textOf(findByTestId(root.container, 'current-route'))).toBe('DatosCliente');
+
+    act(() => {
+      press(findByTestId(root.container, 'btn-set-customer'));
+    });
+
+    let state = JSON.parse(textOf(findByTestId(root.container, 'flow-state-json'))) as FlowState;
+    expect(state.customer).toEqual({
+      name: 'Juan Carlos',
+      email: 'jc@ejemplo.com',
+      phone: '3001234567',
+    });
+    expect(state.eventDate).toBe('2027-11-20');
+
+    // 3. Volver atrás a MiEvento: los datos del cliente, carrito y presupuesto se conservan
+    act(() => {
+      press(findByTestId(root.container, 'go-to-mievento'));
+    });
+    expect(textOf(findByTestId(root.container, 'current-route'))).toBe('MiEvento');
+
+    state = JSON.parse(textOf(findByTestId(root.container, 'flow-state-json'))) as FlowState;
+    expect(state.customer?.name).toBe('Juan Carlos');
+    expect(state.customer?.email).toBe('jc@ejemplo.com');
+    expect(state.customer?.phone).toBe('3001234567');
+    expect(state.eventDate).toBe('2027-11-20');
+    expect(state.cart).toHaveLength(3);
+    expect(state.budgetCop).toBe(8_000_000);
+
+    // 4. Volver a DatosCliente: los datos siguen intactos
+    act(() => {
+      press(findByTestId(root.container, 'go-to-datos-cliente'));
+    });
+    expect(textOf(findByTestId(root.container, 'current-route'))).toBe('DatosCliente');
+
+    state = JSON.parse(textOf(findByTestId(root.container, 'flow-state-json'))) as FlowState;
+    expect(state.customer).toEqual({
+      name: 'Juan Carlos',
+      email: 'jc@ejemplo.com',
+      phone: '3001234567',
+    });
+  });
 });
+
